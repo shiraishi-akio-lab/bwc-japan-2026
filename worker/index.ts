@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import rubric from "../data/rubric.json";
-import { BUYER_OPENING, buyerReply, check, decideNext, organize, type Turn } from "./claude";
+import { BUYER_OPENING, buyerReply, check, decideNext, organize, splitTranscript, type Turn } from "./claude";
 import { approvedCases, cases } from "./data";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
 
 const MAX_REP_TURNS = 8; // 練習は5分程度。長い雑談にしない
 const MAX_TEXT = 600;
+const MAX_TRANSCRIPT = 20000; // 30分ほどの商談まで
+const RECORDING = "recording"; // 本番の商談の文字起こしから作った振り返り
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -39,8 +41,12 @@ app.post("/api/practice/:id/turn", async (c) => {
   const said = (text ?? "").trim();
   if (!said || said.length > MAX_TEXT) return c.json({ error: `発言は1〜${MAX_TEXT}字で入力してください` }, 400);
 
+  const session = await c.env.DB.prepare("SELECT scenario_id FROM practice_sessions WHERE id = ?")
+    .bind(id)
+    .first<{ scenario_id: string }>();
+  if (!session) return c.json({ error: "練習が見つかりません" }, 404);
+  if (session.scenario_id === RECORDING) return c.json({ error: "本番の振り返りには、発言を足せません" }, 409);
   const turns = await loadTurns(c.env.DB, id);
-  if (turns.length === 0) return c.json({ error: "練習が見つかりません" }, 404);
   if (turns.filter((t) => t.role === "rep").length >= MAX_REP_TURNS) {
     return c.json({ error: "この練習は終わりです。メモを書いて振り返りに進んでください" }, 409);
   }
@@ -77,6 +83,28 @@ app.post("/api/practice/:id/check", async (c) => {
       .bind(crypto.randomUUID(), id, JSON.stringify(result), JSON.stringify(next)),
   ]);
   return c.json({ ...result, next });
+});
+
+// 本番の商談のあと：話者分け済みの文字起こしを貼る → 練習と同じ「確かめる → 次の一行動」に流す
+// 録音そのものは受け取らない・保存しない
+app.post("/api/recordings", async (c) => {
+  const key = c.env.ANTHROPIC_API_KEY;
+  if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
+  const { transcript } = await c.req.json<{ transcript?: string }>();
+  const text = (transcript ?? "").trim();
+  if (text.length < 40 || text.length > MAX_TRANSCRIPT) {
+    return c.json({ error: `文字起こしは40〜${MAX_TRANSCRIPT}字で貼ってください` }, 400);
+  }
+
+  const turns = await splitTranscript(key, text);
+  const id = crypto.randomUUID();
+  await c.env.DB.batch([
+    c.env.DB.prepare("INSERT INTO practice_sessions (id, scenario_id) VALUES (?, ?)").bind(id, RECORDING),
+    ...turns.map((t) =>
+      c.env.DB.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, ?, ?)").bind(id, t.role, t.content),
+    ),
+  ]);
+  return c.json({ id, turns });
 });
 
 // 整理する係：ベテランの語り → ケースカードの候補（pending）。承認は人が Obsidian で行う

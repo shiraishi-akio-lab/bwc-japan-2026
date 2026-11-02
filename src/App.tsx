@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Organize } from "./Organize";
+import { Recording } from "./Recording";
 
 type Turn = { role: "rep" | "buyer"; content: string };
 type Axis = { id: string; name: string; question: string };
@@ -31,7 +32,8 @@ export function App() {
   const [result, setResult] = useState<AxisResult[] | null>(null);
   const [next, setNext] = useState<NextAction | null>(null);
   const [showMap, setShowMap] = useState(false);
-  const [mode, setMode] = useState<"practice" | "organize">("practice");
+  const [mode, setMode] = useState<"practice" | "recording" | "organize">("practice");
+  const [isRecording, setIsRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,8 +58,20 @@ export function App() {
       const s = await api<{ id: string; turns: Turn[] }>("/api/practice", {});
       setSessionId(s.id);
       setTurns(s.turns);
+      setIsRecording(false);
       setResult(null);
+      setNext(null);
     });
+
+  // 本番の文字起こしを読み込んだら、練習と同じ画面で「確かめる」に進む
+  const fromRecording = (id: string, t: Turn[]) => {
+    setSessionId(id);
+    setTurns(t);
+    setIsRecording(true);
+    setResult(null);
+    setNext(null);
+    setMode("practice");
+  };
 
   const send = () =>
     run(async () => {
@@ -82,10 +96,12 @@ export function App() {
       <p style={{ marginTop: 0, color: "#555" }}>商談の前に5分、バイヤーを相手に練習する。結果は本人だけが見る。</p>
       <nav style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button onClick={() => setMode("practice")} disabled={mode === "practice"}>若手：練習する</button>
+        <button onClick={() => setMode("recording")} disabled={mode === "recording"}>若手：本番を振り返る</button>
         <button onClick={() => setMode("organize")} disabled={mode === "organize"}>ベテラン：語りを残す</button>
       </nav>
 
       {mode === "organize" && <Organize axisName={axisName} />}
+      {mode === "recording" && <Recording onReady={fromRecording} />}
 
       {mode === "practice" && <>
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
@@ -100,19 +116,21 @@ export function App() {
 
       {sessionId && (
         <section>
-          <h2>1. 練習</h2>
+          <h2>{isRecording ? "1. 本番の商談（文字起こし）" : "1. 練習"}</h2>
           <ol style={{ listStyle: "none", padding: 0 }}>
             {turns.map((t, i) => (
               <li key={i} style={{ margin: "8px 0", textAlign: t.role === "rep" ? "right" : "left" }}>
-                <span style={{ fontSize: 12, color: "#777" }}>{t.role === "rep" ? "あなた" : "佐伯（バイヤー役）"}</span>
+                <span style={{ fontSize: 12, color: "#777" }}>{t.role === "rep" ? "あなた" : isRecording ? "バイヤー" : "佐伯（バイヤー役）"}</span>
                 <div style={{ display: "inline-block", padding: "8px 12px", borderRadius: 8, background: t.role === "rep" ? "#e8f0fe" : "#f1f3f4", maxWidth: "85%", textAlign: "left" }}>
                   {t.content}
                 </div>
               </li>
             ))}
           </ol>
+          {!isRecording && <>
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} style={{ width: "100%" }} placeholder="あなたの発言" />
           <button onClick={send} disabled={busy || !draft.trim()}>話す</button>
+          </>}
 
           <h2>2. 3分メモ</h2>
           {(

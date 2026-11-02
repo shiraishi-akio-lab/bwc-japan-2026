@@ -159,6 +159,47 @@ export async function decideNext(apiKey: string, turns: Turn[], result: CheckRes
   return { ...next, axis, caseId: ids.has(next.caseId) ? next.caseId : "", otherCount: missing.length - 1 };
 }
 
+// 本番の商談の文字起こし（録音アプリで話者分け済み）を、若手／バイヤーの発言に分ける
+const SplitSchema = z.object({
+  repSpeaker: z.string(),
+  buyerSpeaker: z.string(),
+  turns: z.array(z.object({ speaker: z.string(), text: z.string() })),
+});
+
+const SPLIT_SYSTEM = `あなたは商談の文字起こしを読み、発言を話者ごとに並べ直す係です。文字起こしは録音アプリが話者分けしたもので、話者名は「話者1」「Speaker A」や人の名前などになっています。
+
+## やること
+- 文字起こしに出てくる話者名を、そのまま speaker に入れて、発言を順番どおりに turns に並べる。時刻や記号は外してよい。
+- text には、文字起こしの文をそのまま写す。言い換え・要約・補いをしない。
+- 話の中身から、どの話者がメーカーの営業（若手）で、どの話者がバイヤー（提案を受ける側）かを判断し、repSpeaker と buyerSpeaker に話者名を入れる。
+- 3人以上いる場合も、営業側とバイヤー側でいちばん多く話している人をそれぞれ選ぶ。`;
+
+export async function splitTranscript(apiKey: string, transcript: string): Promise<Turn[]> {
+  const res = await client(apiKey).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 16000,
+    ...FALLBACK,
+    output_config: { effort: "low", format: zodOutputFormat(SplitSchema) },
+    system: [{ type: "text", text: SPLIT_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: `## 文字起こし\n${transcript}` }],
+  });
+  const out = res.parsed_output;
+  if (res.stop_reason === "refusal" || !out) throw new Error("文字起こしを読み取れませんでした");
+  // 文字起こしに無い文は採らない（要約や補いを混ぜない）
+  const flat = transcript.replace(/\s+/g, "");
+  const turns: Turn[] = out.turns
+    .filter((t) => t.text.trim() && flat.includes(t.text.replace(/\s+/g, "")))
+    .flatMap((t): Turn[] =>
+      t.speaker === out.repSpeaker
+        ? [{ role: "rep", content: t.text.trim() }]
+        : t.speaker === out.buyerSpeaker
+          ? [{ role: "buyer", content: t.text.trim() }]
+          : [],
+    );
+  if (!turns.some((t) => t.role === "rep")) throw new Error("営業側の発言を見つけられませんでした");
+  return turns;
+}
+
 // 整理する係：ベテランの語りから、ケースカードの候補を作る（承認は人）
 const NOT_SAID = "（語りに無い）";
 const DraftSchema = z.object({
