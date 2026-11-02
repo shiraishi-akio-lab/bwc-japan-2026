@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 棚割り改定の1か月前に初めて訪問した。
 
 ## 見落とした前提
-
+商談の流れの理解不足。普通なら担当の卸さんから紹介してもらう（信頼関係）
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+dialogue
 
 ## 次の一手
+もう少し早い時期に、卸さんと一緒に顔を出す
 

@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 相手の反対を言い換えずに、自社商品の説明を繰り返した。
 
 ## 見落とした前提
-
+相手の機嫌を損ねると、他のことも進まなくなる
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+相手の話を十分に聞いて、相手の課題を解決するような提案にする
 

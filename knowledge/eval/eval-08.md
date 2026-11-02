@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 PB と正面から並べる提案をした。チェーンの方針は『PB の粗利を守る』。
 
 ## 見落とした前提
-
+チェーンが PB をどれくらい販売するかの目標を理解しているか
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+うまく比較販売して、PB も伸びるような提案をする
 

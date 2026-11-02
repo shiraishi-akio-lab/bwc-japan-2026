@@ -3,9 +3,9 @@
   "id": "eval-10",
   "situation": "相手の反対を言い換えずに、自社商品の説明を繰り返した。",
   "answer": {
-    "missed_premise": "",
-    "axis": "",
-    "next_action": ""
+    "missed_premise": "相手の機嫌を損ねると、他のことも進まなくなる",
+    "axis": "customer",
+    "next_action": "相手の話を十分に聞いて、相手の課題を解決するような提案にする"
   },
   "note": "answer はオーナー（元ドラッグストア社長＝バイヤー側の経験者）が書く。AI の出力はこの正解と照合して一致率を出す。"
 }

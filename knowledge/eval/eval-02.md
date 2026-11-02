@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 市場全体の伸び率だけを示して全店導入を迫った。バイヤー『うちでは伸びていない』。
 
 ## 見落とした前提
-
+陳列量、売り場づくり、エリア（の違い）
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+hypothesis
 
 ## 次の一手
+「他社と同じ形で展開していたとしたら（具体的な行動を示す）、ここまで売れますよ」と示す
 

@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 大きな陳列を提案。バイヤー『人が足りなくて店が回らない』。
 
 ## 見落とした前提
-
+小売店の事情（人手）
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+より簡単な展開・陳列方法を提案する
 

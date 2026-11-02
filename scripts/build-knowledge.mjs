@@ -79,8 +79,9 @@ for (const [file, pending] of cardSources) {
 const evalIds = new Set();
 for (const file of mdFiles(path.join(K, "eval"))) {
   const { meta, body, rel } = read(file);
-  const axis = body["軸"] ?? "";
-  if (axis && !axisIds.has(axis)) errors.push(`${rel}：軸 ${axis} は物差しにありません`);
+  // 軸は1つ。迷う場面は2つまで（カンマ区切り）。どちらかに当たれば一致とする
+  const axis = (body["軸"] ?? "").split(/[,、]/).map((a) => a.trim()).filter(Boolean).join(",");
+  for (const a of axis ? axis.split(",") : []) if (!axisIds.has(a)) errors.push(`${rel}：軸 ${a} は物差しにありません`);
   evalIds.add(meta.id);
   write(path.join(D, "eval", `${meta.id}.json`), {
     _generated: `${rel} から生成。直接編集しない`,

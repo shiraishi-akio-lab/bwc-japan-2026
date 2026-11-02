@@ -100,7 +100,7 @@ async function runOne(item: EvalItem, useCards: boolean): Promise<Row> {
       id: item.id,
       condition,
       axis: next.axis,
-      axisMatch: next.axis === item.answer.axis,
+      axisMatch: item.answer.axis.split(",").includes(next.axis),
       premiseCovered: j.premiseCovered,
       nextActionMatch: j.nextActionMatch,
       action: next.action,
@@ -135,7 +135,8 @@ const rows = await pool(
 
 const pct = (n: number, d: number) => (d === 0 ? "-" : `${Math.round((n / d) * 100)}%`);
 const summary = (["カードなし", "カードあり"] as const).map((condition) => {
-  const rs = rows.filter((r) => r.condition === condition && !r.error);
+  // 答えを出せなかった項目も「一致しなかった」として分母に入れる（都合の悪い件を外さない）
+  const rs = rows.filter((r) => r.condition === condition);
   return {
     condition,
     n: rs.length,

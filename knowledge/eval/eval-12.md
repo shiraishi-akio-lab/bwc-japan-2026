@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 新任のバイヤーに、前任者との約束を前提に話した。
 
 ## 見落とした前提
-
+引き継ぎはできていない（都合のいいことだけが引き継がれている）
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+前回（前任のバイヤー）の商談書と、それに伴う実績を見せる
 

@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 試し導入の結果を返さずに、全店導入を頼みに行った。
 
 ## 見落とした前提
-
+数値や商品への理解がないまま、押し込み営業になっている
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+試し導入の結果を、過去に売れた商品と比べて持っていき、全店でどれくらいの金額になりそうかを示す
 

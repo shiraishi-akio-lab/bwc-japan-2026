@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 価格と数量だけを持ってきた初回の新商品提案。バイヤー『棚がいっぱい』。
 
 ## 見落とした前提
-
+商品の特徴。新商品というだけでなく、新しい顧客の流入を促せる商品であること
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer, hypothesis
 
 ## 次の一手
+どういうターゲットで、それが小売にとっていかに大事かがわかるような資料を用意する
 

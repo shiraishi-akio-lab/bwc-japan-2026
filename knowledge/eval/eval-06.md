@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 冷蔵ケースへの導入を提案。入れ替える商品を示していない。
 
 ## 見落とした前提
-
+冷蔵ケースは限られたスペースなので、入れ替える商品を示すのはマスト。売れ行きや利益から公平に判断できるよう資料を提示する必要がある
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+他社だけでなく、自社も含めて動いていない商材をリストアップする
 

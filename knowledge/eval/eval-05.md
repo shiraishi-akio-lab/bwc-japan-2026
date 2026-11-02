@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 導入の話はまとまりかけたが、粗利を聞かれて答えられなかった。
 
 ## 見落とした前提
-
+バイヤーは粗利・リベートを重視している（そこしか見ていない）
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+customer
 
 ## 次の一手
+通常の粗利だけでなく、条件を達成したときにはここまでになる、と提示する
 

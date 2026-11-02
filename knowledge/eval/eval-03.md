@@ -9,11 +9,12 @@ note: answer はオーナー（元ドラッグストア社長＝バイヤー側�
 夏の2本値引き企画。バイヤー『他社からも同じ企画を聞いた』。
 
 ## 見落とした前提
-
+他社の動き（おそらく前年も同じ販促があった）
 
 ## 軸
-<!-- customer / evidence / hypothesis / feasibility / dialogue のどれか1つ -->
-
+<!-- customer / evidence / hypothesis / feasibility / dialogue から1つ（迷うなら2つまで、カンマ区切り） -->
+hypothesis
 
 ## 次の一手
+数量につながる、お客様が喜ぶアイデアを出す
 
