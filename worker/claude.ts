@@ -106,6 +106,59 @@ export async function check(apiKey: string, turns: Turn[], memo: string): Promis
   return enforceSources(res.parsed_output, turns);
 }
 
+// 次を決める係：抜けていることの中から、次の練習で鍛える一行動を1つだけ選ぶ
+const NextSchema = z.object({
+  axis: z.enum(AXIS_IDS),
+  action: z.string(),
+  reason: z.string(),
+  caseId: z.string(),
+  tryLine: z.string(),
+});
+export type NextAction = z.infer<typeof NextSchema> & { otherCount: number };
+
+const NEXT_SYSTEM = `あなたは商談練習の「次を決める係」です。確かめる係が出した「抜けていること」の一覧から、この若手が次の練習で鍛える行動を**1つだけ**選びます。
+
+## 物差し
+${JSON.stringify(rubric.axes, null, 2)}
+
+## ケースカード（承認済み）
+${JSON.stringify(approvedCases, null, 2)}
+
+## 選び方
+- 若手の今の理解に合わせる。「提案の前に聞く」「相手の反対を言い換える」のような土台が抜けているなら、数字や仮説より先に土台を選ぶ。土台ができているなら、一段上の行動を選ぶ。
+- 練習の記録でバイヤーが反発した場面に結びつくものを優先する（本人が手応えとして覚えている所から直す）。
+- 次の練習1回でできる大きさにする。「お客様理解を深める」のような広い言葉にしない。
+- caseId には、その行動の手本になるケースカードの id を1つ入れる。当てはまるものが無ければ空にする。
+- tryLine には、次の練習でそのまま口に出せる一言を書く（例：「どこが同じに見えましたか？」）。
+- reason は1文。なぜ今これなのかを、記録の場面に触れて書く。
+- 点数・人を評価する言葉は使わない。日本語。`;
+
+export async function decideNext(apiKey: string, turns: Turn[], result: CheckResult): Promise<NextAction> {
+  const missing = result.axes.flatMap((a) => a.missing.map((m) => ({ axis: a.axis, ...m })));
+  if (missing.length === 0) throw new Error("抜けていることが無いため、次の一行動を決められません");
+  const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
+  const res = await client(apiKey).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 8000,
+    ...FALLBACK,
+    output_config: { effort: "medium", format: zodOutputFormat(NextSchema) },
+    system: [{ type: "text", text: NEXT_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [
+      {
+        role: "user",
+        content: `## 練習の記録\n${transcript}\n\n## 確かめる係の結果\n${JSON.stringify(result.axes, null, 2)}`,
+      },
+    ],
+  });
+  const next = res.parsed_output;
+  if (res.stop_reason === "refusal" || !next) throw new Error("次を決める係の応答が得られませんでした");
+  // 選んだ軸に「抜けていること」が無い／カードが承認済みでない、はコードで直す
+  const axisMissing = missing.filter((m) => m.axis === next.axis);
+  const axis = axisMissing.length > 0 ? next.axis : missing[0].axis;
+  const ids = new Set(approvedCases.map((c) => c.id));
+  return { ...next, axis, caseId: ids.has(next.caseId) ? next.caseId : "", otherCount: missing.length - 1 };
+}
+
 // 出典の決まりはコードで守らせる：引用が記録に無い・カード id が存在しない、は落とす
 export function enforceSources(result: CheckResult, turns: Turn[]): CheckResult {
   const repText = turns.filter((t) => t.role === "rep").map((t) => t.content).join("\n");

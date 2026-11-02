@@ -8,6 +8,7 @@ type AxisResult = {
   missing: { text: string; caseIds: string[] }[];
   unknown: boolean;
 };
+type NextAction = { axis: string; action: string; reason: string; caseId: string; tryLine: string; otherCount: number };
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(path, {
@@ -27,6 +28,8 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [memo, setMemo] = useState({ facts: "", interpretation: "", nextCheck: "" });
   const [result, setResult] = useState<AxisResult[] | null>(null);
+  const [next, setNext] = useState<NextAction | null>(null);
+  const [showMap, setShowMap] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,8 +66,10 @@ export function App() {
 
   const checkIt = () =>
     run(async () => {
-      const r = await api<{ axes: AxisResult[] }>(`/api/practice/${sessionId}/check`, memo);
+      const r = await api<{ axes: AxisResult[]; next: NextAction }>(`/api/practice/${sessionId}/check`, memo);
       setResult(r.axes);
+      setNext(r.next);
+      setShowMap(false);
     });
 
   const axisName = (id: string) => axes.find((a) => a.id === id)?.name ?? id;
@@ -117,9 +122,28 @@ export function App() {
         </section>
       )}
 
-      {result && (
+      {next && (
         <section>
-          <h2>3. 理解の地図</h2>
+          <h2>3. 次に鍛える一行動</h2>
+          <div style={{ border: "2px solid #1a73e8", borderRadius: 8, padding: 16 }}>
+            <small style={{ color: "#555" }}>{axisName(next.axis)}</small>
+            <p style={{ fontSize: 18, fontWeight: 600, margin: "4px 0 8px" }}>{next.action}</p>
+            <p style={{ margin: "0 0 8px" }}>次の練習で言ってみる：「{next.tryLine}」</p>
+            <p style={{ margin: 0, fontSize: 14, color: "#444" }}>
+              なぜ今これか：{next.reason}
+              {next.caseId && <><br />手本：{next.caseId}</>}
+            </p>
+          </div>
+          <p style={{ fontSize: 13, color: "#555" }}>
+            ほかに気づいた点が {next.otherCount} 件あります。今は1つに絞っています。
+            <button onClick={() => setShowMap(!showMap)} style={{ marginLeft: 8 }}>{showMap ? "閉じる" : "理解の地図を見る"}</button>
+          </p>
+        </section>
+      )}
+
+      {result && showMap && (
+        <section>
+          <h2>理解の地図</h2>
           <p style={{ fontSize: 13, color: "#555" }}>点数は出しません。根拠は、あなたの発言の引用と、ベテランのケースカードの番号です。</p>
           {result.map((a) => (
             <div key={a.axis} style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" }}>
@@ -138,9 +162,10 @@ export function App() {
               )}
             </div>
           ))}
-          <button onClick={start} disabled={busy}>もう一度練習する</button>
         </section>
       )}
+
+      {next && <button onClick={start} disabled={busy}>もう一度練習する</button>}
     </main>
   );
 }

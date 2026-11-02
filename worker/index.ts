@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import rubric from "../data/rubric.json";
-import { BUYER_OPENING, buyerReply, check, type Turn } from "./claude";
+import { BUYER_OPENING, buyerReply, check, decideNext, type Turn } from "./claude";
 import { cases } from "./data";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
@@ -69,13 +69,14 @@ app.post("/api/practice/:id/check", async (c) => {
 
   const memo = [`事実：${facts}`, `解釈：${interpretation}`, `次に確かめること：${nextCheck}`].join("\n");
   const result = await check(key, turns, memo);
+  const next = await decideNext(key, turns, result);
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO memos (id, session_id, facts, interpretation, next_check) VALUES (?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), id, facts, interpretation, nextCheck),
     c.env.DB.prepare("INSERT INTO assessments (id, session_id, map_json, next_action_json) VALUES (?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), id, JSON.stringify(result), "null"),
+      .bind(crypto.randomUUID(), id, JSON.stringify(result), JSON.stringify(next)),
   ]);
-  return c.json(result);
+  return c.json({ ...result, next });
 });
 
 app.onError((err, c) => {
