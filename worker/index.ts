@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import rubric from "../data/rubric.json";
-import { BUYER_OPENING, buyerReply, check, decideNext, type Turn } from "./claude";
+import { BUYER_OPENING, buyerReply, check, decideNext, organize, type Turn } from "./claude";
 import { approvedCases, cases } from "./data";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
@@ -77,6 +77,22 @@ app.post("/api/practice/:id/check", async (c) => {
       .bind(crypto.randomUUID(), id, JSON.stringify(result), JSON.stringify(next)),
   ]);
   return c.json({ ...result, next });
+});
+
+// 整理する係：ベテランの語り → ケースカードの候補（pending）。承認は人が Obsidian で行う
+app.post("/api/drafts", async (c) => {
+  const key = c.env.ANTHROPIC_API_KEY;
+  if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
+  const { story } = await c.req.json<{ story?: string }>();
+  const text = (story ?? "").trim();
+  if (text.length < 40 || text.length > 4000) return c.json({ error: "語りは40〜4000字で入力してください" }, 400);
+
+  const draft = await organize(key, text);
+  const id = crypto.randomUUID();
+  await c.env.DB.prepare("INSERT INTO case_drafts (id, source_text, card_json) VALUES (?, ?, ?)")
+    .bind(id, text, JSON.stringify(draft))
+    .run();
+  return c.json({ id, draft });
 });
 
 app.onError((err, c) => {

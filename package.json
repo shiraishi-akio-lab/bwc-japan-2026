@@ -11,7 +11,8 @@
     "typecheck": "tsc -b --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "cf-typegen": "wrangler types",
-    "eval": "npm run knowledge && tsx --env-file=.dev.vars scripts/eval.ts"
+    "eval": "npm run knowledge && tsx --env-file=.dev.vars scripts/eval.ts",
+    "drafts:pull": "node scripts/pull-drafts.mjs"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.67.0",

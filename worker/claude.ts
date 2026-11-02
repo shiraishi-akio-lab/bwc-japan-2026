@@ -159,6 +159,50 @@ export async function decideNext(apiKey: string, turns: Turn[], result: CheckRes
   return { ...next, axis, caseId: ids.has(next.caseId) ? next.caseId : "", otherCount: missing.length - 1 };
 }
 
+// 整理する係：ベテランの語りから、ケースカードの候補を作る（承認は人）
+const NOT_SAID = "（語りに無い）";
+const DraftSchema = z.object({
+  title: z.string(),
+  scene: z.string(),
+  axes: z.array(z.enum(AXIS_IDS)),
+  situation: z.string(),
+  hypothesis: z.string(),
+  evidence: z.string(),
+  proposal: z.string(),
+  constraints: z.string(),
+  result: z.string(),
+  nextJudgment: z.string(),
+  rejectedOptions: z.array(z.object({ option: z.string(), reason: z.string() })),
+  questionsForVeteran: z.array(z.string()),
+});
+export type CardDraft = z.infer<typeof DraftSchema>;
+
+const ORGANIZE_SYSTEM = `あなたは「整理する係」です。ベテラン営業が語った商談の思い出を、ケースカードの形に整理します。カードは若手の練習で「根拠」として使われるので、語られていないことを足してはいけません。
+
+## 物差し（axes はこの id から1〜2個）
+${JSON.stringify(rubric.axes.map(({ id, name, question }) => ({ id, name, question })), null, 2)}
+
+## 書き方の決まり
+- 語りに書かれていることだけを使う。語りに無い項目は「${NOT_SAID}」とする。推測で埋めない。
+- situation（状況）／hypothesis（仮説）／evidence（根拠）／proposal（提案）／constraints（制約）／result（結果）／nextJudgment（次の判断）は、それぞれ1〜2文。
+- rejectedOptions は、ベテランが「あえてやらなかったこと」と、その理由。語りに無ければ空。
+- questionsForVeteran には、カードを確かなものにするためにベテランへ聞き返したいことを、「${NOT_SAID}」の項目を中心に最大3つ書く。
+- 実在の企業・店舗・人物・地域の名前が語りに出てきたら、「あるチェーン」「ある店」のように伏せる。
+- title は「何が起きた商談か」が分かる1行。scene は場面の短い名前（例：初回提案、他社と同じ企画）。日本語。`;
+
+export async function organize(apiKey: string, story: string): Promise<CardDraft> {
+  const res = await client(apiKey).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 8000,
+    ...FALLBACK,
+    output_config: { effort: "medium", format: zodOutputFormat(DraftSchema) },
+    system: [{ type: "text", text: ORGANIZE_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: `## ベテランの語り\n${story}` }],
+  });
+  if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("整理する係の応答が得られませんでした");
+  return res.parsed_output;
+}
+
 // 出典の決まりはコードで守らせる：引用が記録に無い・カード id が存在しない、は落とす
 export function enforceSources(result: CheckResult, turns: Turn[], cards: CaseCard[]): CheckResult {
   const repText = turns.filter((t) => t.role === "rep").map((t) => t.content).join("\n");

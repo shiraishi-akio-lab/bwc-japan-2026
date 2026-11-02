@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Organize } from "./Organize";
 
 type Turn = { role: "rep" | "buyer"; content: string };
 type Axis = { id: string; name: string; question: string };
@@ -30,6 +31,7 @@ export function App() {
   const [result, setResult] = useState<AxisResult[] | null>(null);
   const [next, setNext] = useState<NextAction | null>(null);
   const [showMap, setShowMap] = useState(false);
+  const [mode, setMode] = useState<"practice" | "organize">("practice");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +80,14 @@ export function App() {
     <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "32px auto", padding: "0 16px", lineHeight: 1.6 }}>
       <h1 style={{ marginBottom: 4 }}>隣席コーチ（仮）</h1>
       <p style={{ marginTop: 0, color: "#555" }}>商談の前に5分、バイヤーを相手に練習する。結果は本人だけが見る。</p>
+      <nav style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button onClick={() => setMode("practice")} disabled={mode === "practice"}>若手：練習する</button>
+        <button onClick={() => setMode("organize")} disabled={mode === "organize"}>ベテラン：語りを残す</button>
+      </nav>
+
+      {mode === "organize" && <Organize axisName={axisName} />}
+
+      {mode === "practice" && <>
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
 
       {!sessionId && (
@@ -166,6 +176,7 @@ export function App() {
       )}
 
       {next && <button onClick={start} disabled={busy}>もう一度練習する</button>}
+      </>}
     </main>
   );
 }
