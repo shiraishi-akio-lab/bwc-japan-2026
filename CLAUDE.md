@@ -41,4 +41,5 @@ npm run knowledge         # knowledge/ の Markdown を data/ の JSON に変換
 npm run dev               # 変換してから、画面と API を手元で起動（Vite + Cloudflare プラグイン）
 npm run build             # 型チェックとビルド
 npm run db:migrate:local  # 手元の D1 にスキーマを当てる
+npm run eval              # 評価セットで一致率を測る（カードなし／ありの比較・明細は eval-results/）
 ```

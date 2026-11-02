@@ -10,13 +10,15 @@
     "preview": "npm run build && vite preview",
     "typecheck": "tsc -b --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "eval": "npm run knowledge && tsx --env-file=.dev.vars scripts/eval.ts"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.67.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "wrangler": "^4.156.1",

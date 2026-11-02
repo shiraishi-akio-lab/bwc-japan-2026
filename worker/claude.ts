@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import rubric from "../data/rubric.json";
 import world from "../data/world.json";
-import { approvedCases } from "./data";
+import type { CaseCard } from "./types";
 
 const MODEL = "claude-opus-5-5";
 // 安全上の判定で断られたときは、サーバー側で別のモデルに引き継ぐ
@@ -76,13 +76,13 @@ const CheckSchema = z.object({
 });
 export type CheckResult = z.infer<typeof CheckSchema>;
 
-const CHECK_SYSTEM = `あなたは商談練習の「確かめる係」です。若手営業とバイヤー役の練習の記録と、若手が書いた3分メモを読み、物差しの5つの軸ごとに「できていること」と「抜けていること」を書き出します。
+const checkSystem = (cards: CaseCard[]) => `あなたは商談練習の「確かめる係」です。若手営業とバイヤー役の練習の記録と、若手が書いた3分メモを読み、物差しの5つの軸ごとに「できていること」と「抜けていること」を書き出します。
 
 ## 物差し（この軸と観察できる行動だけを基準にする）
 ${JSON.stringify(rubric.axes, null, 2)}
 
 ## ケースカード（ベテランの判断の記録。承認済みのものだけ）
-${JSON.stringify(approvedCases, null, 2)}
+${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 
 ## 書き方の決まり
 - 5つの軸すべてについて1件ずつ出す。
@@ -92,18 +92,18 @@ ${JSON.stringify(approvedCases, null, 2)}
 - 点数・順位・総合評価は出さない。人を評価する言葉（優秀、未熟など）を使わない。
 - 1項目は1文。日本語。`;
 
-export async function check(apiKey: string, turns: Turn[], memo: string): Promise<CheckResult> {
+export async function check(apiKey: string, turns: Turn[], memo: string, cards: CaseCard[]): Promise<CheckResult> {
   const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
   const res = await client(apiKey).beta.messages.parse({
     model: MODEL,
     max_tokens: 16000,
     ...FALLBACK,
     output_config: { effort: "high", format: zodOutputFormat(CheckSchema) },
-    system: [{ type: "text", text: CHECK_SYSTEM, cache_control: { type: "ephemeral" } }],
+    system: [{ type: "text", text: checkSystem(cards), cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: `## 練習の記録\n${transcript}\n\n## 3分メモ\n${memo || "（未記入）"}` }],
   });
   if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("確かめる係の応答が得られませんでした");
-  return enforceSources(res.parsed_output, turns);
+  return enforceSources(res.parsed_output, turns, cards);
 }
 
 // 次を決める係：抜けていることの中から、次の練習で鍛える一行動を1つだけ選ぶ
@@ -116,13 +116,13 @@ const NextSchema = z.object({
 });
 export type NextAction = z.infer<typeof NextSchema> & { otherCount: number };
 
-const NEXT_SYSTEM = `あなたは商談練習の「次を決める係」です。確かめる係が出した「抜けていること」の一覧から、この若手が次の練習で鍛える行動を**1つだけ**選びます。
+const nextSystem = (cards: CaseCard[]) => `あなたは商談練習の「次を決める係」です。確かめる係が出した「抜けていること」の一覧から、この若手が次の練習で鍛える行動を**1つだけ**選びます。
 
 ## 物差し
 ${JSON.stringify(rubric.axes, null, 2)}
 
 ## ケースカード（承認済み）
-${JSON.stringify(approvedCases, null, 2)}
+${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 
 ## 選び方
 - 若手の今の理解に合わせる。「提案の前に聞く」「相手の反対を言い換える」のような土台が抜けているなら、数字や仮説より先に土台を選ぶ。土台ができているなら、一段上の行動を選ぶ。
@@ -133,7 +133,7 @@ ${JSON.stringify(approvedCases, null, 2)}
 - reason は1文。なぜ今これなのかを、記録の場面に触れて書く。
 - 点数・人を評価する言葉は使わない。日本語。`;
 
-export async function decideNext(apiKey: string, turns: Turn[], result: CheckResult): Promise<NextAction> {
+export async function decideNext(apiKey: string, turns: Turn[], result: CheckResult, cards: CaseCard[]): Promise<NextAction> {
   const missing = result.axes.flatMap((a) => a.missing.map((m) => ({ axis: a.axis, ...m })));
   if (missing.length === 0) throw new Error("抜けていることが無いため、次の一行動を決められません");
   const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
@@ -142,7 +142,7 @@ export async function decideNext(apiKey: string, turns: Turn[], result: CheckRes
     max_tokens: 8000,
     ...FALLBACK,
     output_config: { effort: "medium", format: zodOutputFormat(NextSchema) },
-    system: [{ type: "text", text: NEXT_SYSTEM, cache_control: { type: "ephemeral" } }],
+    system: [{ type: "text", text: nextSystem(cards), cache_control: { type: "ephemeral" } }],
     messages: [
       {
         role: "user",
@@ -155,14 +155,14 @@ export async function decideNext(apiKey: string, turns: Turn[], result: CheckRes
   // 選んだ軸に「抜けていること」が無い／カードが承認済みでない、はコードで直す
   const axisMissing = missing.filter((m) => m.axis === next.axis);
   const axis = axisMissing.length > 0 ? next.axis : missing[0].axis;
-  const ids = new Set(approvedCases.map((c) => c.id));
+  const ids = new Set(cards.map((c) => c.id));
   return { ...next, axis, caseId: ids.has(next.caseId) ? next.caseId : "", otherCount: missing.length - 1 };
 }
 
 // 出典の決まりはコードで守らせる：引用が記録に無い・カード id が存在しない、は落とす
-export function enforceSources(result: CheckResult, turns: Turn[]): CheckResult {
+export function enforceSources(result: CheckResult, turns: Turn[], cards: CaseCard[]): CheckResult {
   const repText = turns.filter((t) => t.role === "rep").map((t) => t.content).join("\n");
-  const ids = new Set(approvedCases.map((c) => c.id));
+  const ids = new Set(cards.map((c) => c.id));
   const byAxis = new Map(result.axes.map((a) => [a.axis, a]));
   return {
     axes: rubric.axes.map((axis) => {
