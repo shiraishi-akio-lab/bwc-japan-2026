@@ -12,9 +12,12 @@ Built with Claude: Japan 2026（2026-11-02〜11-08）の提出作品。このリ
 | `src/` | 画面（React + Vite + TypeScript） |
 | `worker/` | API（Hono on Cloudflare Workers）。`/api/*` だけ Worker が受ける |
 | `migrations/` | D1 のスキーマ（手元は `npm run db:migrate:local`） |
-| `data/rubric.json` | 5つの軸の物差し（層1：場面の手引き）。**指示文に埋め込まず、ここを読む** |
-| `data/cases/*.json` | ケースカード（層2：判断の記録庫）。`status: approved` だけを根拠に使う |
-| `data/eval/*.json` | 評価セット。`answer` は人（バイヤー側の経験者）が書く。AI が書き換えない |
+| `knowledge/` | **知識の正本**＝Obsidian の保管庫。物差し（`rubric/`・層1）、ケースカード（`cards/`・層2）、候補（`cards/_pending/`）、評価セット（`eval/`）を Markdown で書く。書き方は `knowledge/_はじめに.md` |
+| `scripts/build-knowledge.mjs` | `knowledge/` → `data/*.json` の変換（`npm run knowledge`）。誤りがあれば何も書き出さずに止まる |
+| `data/rubric.json`・`data/cases/`・`data/eval/` | **生成物。直接編集しない**。アプリはここを読む。指示文に物差しやカードを埋め込まない。根拠に使うのは `status: approved` のカードだけ |
+| `data/world.json` | 舞台設定（架空の会社・人物）。これは手で編集する |
+
+- 評価セットの `answer`（正解）は人（バイヤー側の経験者）が `knowledge/eval/` に書く。AI が書き換えない。
 
 ## 4つの係（Claude の役割）
 1. 整理する係：ベテランの語り → ケースカードの候補（`pending`）。承認は人。
@@ -34,7 +37,8 @@ Built with Claude: Japan 2026（2026-11-02〜11-08）の提出作品。このリ
 
 ## コマンド
 ```bash
-npm run dev               # 画面と API を手元で起動（Vite + Cloudflare プラグイン）
+npm run knowledge         # knowledge/ の Markdown を data/ の JSON に変換
+npm run dev               # 変換してから、画面と API を手元で起動（Vite + Cloudflare プラグイン）
 npm run build             # 型チェックとビルド
 npm run db:migrate:local  # 手元の D1 にスキーマを当てる
 ```

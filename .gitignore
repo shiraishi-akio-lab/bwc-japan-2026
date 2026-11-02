@@ -28,3 +28,8 @@ build/
 .wrangler/
 .dev.vars
 *.tsbuildinfo
+
+# Obsidian の個人の作業状態（見た目の設定 app.json だけ共有する）
+knowledge/.obsidian/*
+!knowledge/.obsidian/app.json
+knowledge/.trash/
