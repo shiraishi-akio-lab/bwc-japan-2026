@@ -23,3 +23,8 @@ build/
 *.log
 *.sqlite
 *.db
+
+# wrangler local state / secrets
+.wrangler/
+.dev.vars
+*.tsbuildinfo
