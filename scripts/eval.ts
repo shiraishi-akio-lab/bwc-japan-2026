@@ -8,7 +8,7 @@ import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { check, decideNext, type Turn } from "../worker/claude";
+import { check, decideNext, selectCards, type Turn } from "../worker/claude";
 import type { CaseCard } from "../worker/types";
 
 type EvalItem = {
@@ -78,6 +78,7 @@ type Row = {
   nextActionMatch: boolean;
   action: string;
   reason: string;
+  picked: string[];
   error?: string;
 };
 
@@ -92,8 +93,9 @@ async function runOne(item: EvalItem, useCards: boolean): Promise<Row> {
   ];
   const memo = "（評価用の注記）この記録は場面の要約です。要約に書かれていない行動は、していないものとして扱ってください。";
   try {
-    const result = await check(apiKey!, turns, memo, given);
-    const next = await decideNext(apiKey!, turns, result, given);
+    const picked = await selectCards(apiKey!, turns, given);
+    const result = await check(apiKey!, turns, memo, picked);
+    const next = await decideNext(apiKey!, turns, result, picked);
     const missing = result.axes.flatMap((a) => a.missing.map((m) => m.text));
     const j = await judge(item, missing, next.action);
     return {
@@ -105,10 +107,11 @@ async function runOne(item: EvalItem, useCards: boolean): Promise<Row> {
       nextActionMatch: j.nextActionMatch,
       action: next.action,
       reason: j.reason,
+      picked: picked.map((c) => c.id),
     };
   } catch (e) {
     const error = (e as Error).message;
-    return { id: item.id, condition, axis: "", axisMatch: false, premiseCovered: false, nextActionMatch: false, action: "", reason: "", error };
+    return { id: item.id, condition, axis: "", axisMatch: false, premiseCovered: false, nextActionMatch: false, action: "", reason: "", picked: [], error };
   }
 }
 

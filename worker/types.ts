@@ -6,6 +6,7 @@ export type CaseCard = {
   status: "pending" | "approved";
   scene: string;
   axes: AxisId[];
+  appliesWhen: string;
   situation: string;
   hypothesis: string;
   evidence: string;

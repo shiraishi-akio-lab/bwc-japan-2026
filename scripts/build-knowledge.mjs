@@ -54,7 +54,7 @@ const cardSources = [
   ...mdFiles(path.join(K, "cards")).map((f) => [f, false]),
   ...mdFiles(path.join(K, "cards", "_pending")).map((f) => [f, true]),
 ];
-const SECTIONS = { situation: "状況", hypothesis: "仮説", evidence: "根拠", proposal: "提案", constraints: "制約", result: "結果", nextJudgment: "次の判断" };
+const SECTIONS = { appliesWhen: "効く条件", situation: "状況", hypothesis: "仮説", evidence: "根拠", proposal: "提案", constraints: "制約", result: "結果", nextJudgment: "次の判断" };
 const cardIds = new Set();
 for (const [file, pending] of cardSources) {
   const { meta, body, rel } = read(file);

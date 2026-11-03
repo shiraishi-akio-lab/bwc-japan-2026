@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import rubric from "../data/rubric.json";
-import { BUYER_OPENING, buyerReply, check, decideNext, organize, splitTranscript, type Turn } from "./claude";
+import { BUYER_OPENING, buyerReply, check, decideNext, organize, selectCards, splitTranscript, type Turn } from "./claude";
 import { approvedCases, cases } from "./data";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
@@ -74,8 +74,9 @@ app.post("/api/practice/:id/check", async (c) => {
   if (!turns.some((t) => t.role === "rep")) return c.json({ error: "練習の発言がまだありません" }, 400);
 
   const memo = [`事実：${facts}`, `解釈：${interpretation}`, `次に確かめること：${nextCheck}`].join("\n");
-  const result = await check(key, turns, memo, approvedCases);
-  const next = await decideNext(key, turns, result, approvedCases);
+  const picked = await selectCards(key, turns, approvedCases);
+  const result = await check(key, turns, memo, picked);
+  const next = await decideNext(key, turns, result, picked);
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO memos (id, session_id, facts, interpretation, next_check) VALUES (?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), id, facts, interpretation, nextCheck),

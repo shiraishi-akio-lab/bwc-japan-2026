@@ -61,6 +61,37 @@ export async function buyerReply(apiKey: string, turns: Turn[]): Promise<string>
     .trim();
 }
 
+// 選ぶ係：カードを全部渡すと、どの場面にも当てはまるチェックリストとして使われてしまう。
+// 「効く条件」がこの記録に当てはまるカードだけを先に選び、確かめる係と次を決める係にはそれだけを渡す
+const SelectSchema = z.object({ picks: z.array(z.object({ caseId: z.string(), why: z.string() })) });
+const MAX_PICKS = 3;
+
+const SELECT_SYSTEM = `あなたは商談練習の「カードを選ぶ係」です。練習の記録を読み、ベテランの判断の記録（ケースカード）のうち、この記録の場面に当てはまるものだけを選びます。
+
+## 選び方
+- 各カードの appliesWhen（効く条件）が、この記録の中で実際に起きているかで判断する。記録に手がかり（相手の言葉・提案の種類・相手の事情）が無いものは選ばない。
+- 「どんな商談にも言える」という理由では選ばない。
+- 最大${MAX_PICKS}枚。当てはまるものが無ければ、picks は空にする。
+- why には、記録のどの発言・どの事情が効く条件に当たるかを1文で書く。日本語。`;
+
+export async function selectCards(apiKey: string, turns: Turn[], cards: CaseCard[]): Promise<CaseCard[]> {
+  if (cards.length === 0) return [];
+  const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
+  const index = cards.map(({ id, scene, appliesWhen, situation }) => ({ id, scene, appliesWhen, situation }));
+  const res = await client(apiKey).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    ...FALLBACK,
+    output_config: { effort: "low", format: zodOutputFormat(SelectSchema) },
+    system: [{ type: "text", text: SELECT_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: `## ケースカード\n${JSON.stringify(index, null, 2)}\n\n## 練習の記録\n${transcript}` }],
+  });
+  if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("カードを選ぶ係の応答が得られませんでした");
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const picked = [...new Set(res.parsed_output.picks.map((p) => p.caseId))].flatMap((id) => byId.get(id) ?? []);
+  return picked.slice(0, MAX_PICKS);
+}
+
 // 確かめる係：練習の記録と3分メモから、軸ごとの「できていること／抜けていること」を出す
 const AXIS_IDS = rubric.axes.map((a) => a.id) as [string, ...string[]];
 
@@ -114,7 +145,18 @@ const NextSchema = z.object({
   caseId: z.string(),
   tryLine: z.string(),
 });
-export type NextAction = z.infer<typeof NextSchema> & { otherCount: number };
+// insufficient：記録が短く、抜けていることを1つも挙げられなかった（止まらずに、そのことを返す）
+export type NextAction = Omit<z.infer<typeof NextSchema>, "axis"> & { axis: string; otherCount: number; insufficient?: boolean };
+
+const INSUFFICIENT: NextAction = {
+  axis: "",
+  action: "この記録では、次の一手を決める材料が足りません。もう少し商談を続けて、相手の事情を1つ聞き出してから振り返ってください。",
+  reason: "どの軸でも、できていること・抜けていることを記録から読み取れませんでした。",
+  caseId: "",
+  tryLine: "差し支えなければ、今いちばん気にされていることを教えていただけますか？",
+  otherCount: 0,
+  insufficient: true,
+};
 
 const nextSystem = (cards: CaseCard[]) => `あなたは商談練習の「次を決める係」です。確かめる係が出した「抜けていること」の一覧から、この若手が次の練習で鍛える行動を**1つだけ**選びます。
 
@@ -125,7 +167,9 @@ ${JSON.stringify(rubric.axes, null, 2)}
 ${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 
 ## 選び方
-- 若手の今の理解に合わせる。「提案の前に聞く」「相手の反対を言い換える」のような土台が抜けているなら、数字や仮説より先に土台を選ぶ。土台ができているなら、一段上の行動を選ぶ。
+- 上のケースカードは、この場面に当てはまるとして選ばれたものです。カードがあるときは、そのカードの nextJudgment（ベテランの次の判断）を出発点にして、この若手が次の練習でできる一行動に直す。一般論に言い換えない。
+- 「提案の前に聞く」「相手の反対を言い換える」のような土台を選んでよいのは、記録の中の若手の発言から、土台が崩れていることが読み取れるときだけ。記録に書かれていない、というだけでは選ばない。
+- カードが無いときは、若手の今の理解に合わせる。土台が抜けているなら土台を、できているなら一段上の行動を選ぶ。
 - 練習の記録でバイヤーが反発した場面に結びつくものを優先する（本人が手応えとして覚えている所から直す）。
 - 次の練習1回でできる大きさにする。「お客様理解を深める」のような広い言葉にしない。
 - caseId には、その行動の手本になるケースカードの id を1つ入れる。当てはまるものが無ければ空にする。
@@ -135,7 +179,7 @@ ${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 
 export async function decideNext(apiKey: string, turns: Turn[], result: CheckResult, cards: CaseCard[]): Promise<NextAction> {
   const missing = result.axes.flatMap((a) => a.missing.map((m) => ({ axis: a.axis, ...m })));
-  if (missing.length === 0) throw new Error("抜けていることが無いため、次の一行動を決められません");
+  if (missing.length === 0) return INSUFFICIENT;
   const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
   const res = await client(apiKey).beta.messages.parse({
     model: MODEL,
@@ -206,6 +250,7 @@ const DraftSchema = z.object({
   title: z.string(),
   scene: z.string(),
   axes: z.array(z.enum(AXIS_IDS)),
+  appliesWhen: z.string(),
   situation: z.string(),
   hypothesis: z.string(),
   evidence: z.string(),
@@ -225,6 +270,7 @@ ${JSON.stringify(rubric.axes.map(({ id, name, question }) => ({ id, name, questi
 
 ## 書き方の決まり
 - 語りに書かれていることだけを使う。語りに無い項目は「${NOT_SAID}」とする。推測で埋めない。
+- appliesWhen（効く条件）は、このカードの判断が当てはまる場面を「〜のとき」の1文で書く（相手の言葉・提案の種類・相手の事情など、記録から見分けられる手がかりで）。語りから読み取れなければ「${NOT_SAID}」。
 - situation（状況）／hypothesis（仮説）／evidence（根拠）／proposal（提案）／constraints（制約）／result（結果）／nextJudgment（次の判断）は、それぞれ1〜2文。
 - rejectedOptions は、ベテランが「あえてやらなかったこと」と、その理由。語りに無ければ空。
 - questionsForVeteran には、カードを確かなものにするためにベテランへ聞き返したいことを、「${NOT_SAID}」の項目を中心に最大3つ書く。

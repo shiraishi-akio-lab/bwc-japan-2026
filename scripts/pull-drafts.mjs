@@ -19,7 +19,7 @@ const raw = execFileSync(
 const rows = JSON.parse(raw)[0]?.results ?? [];
 
 const SECTIONS = [
-  ["situation", "状況"], ["hypothesis", "仮説"], ["evidence", "根拠"], ["proposal", "提案"],
+  ["appliesWhen", "効く条件"], ["situation", "状況"], ["hypothesis", "仮説"], ["evidence", "根拠"], ["proposal", "提案"],
   ["constraints", "制約"], ["result", "結果"], ["nextJudgment", "次の判断"],
 ];
 
