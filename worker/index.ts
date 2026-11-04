@@ -3,8 +3,9 @@ import rubric from "../data/rubric.json";
 import { accountRoutes, buildRecord, buyerPersona, loadBuyer } from "./accounts";
 import { buyerOpening, buyerReply, check, decideNext, draftMinutes, organize, selectCards, splitTranscript, type Turn } from "./claude";
 import { approvedCases, cases } from "./data";
+import { handoffRoutes } from "./handoff";
 
-type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
+type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string; HANDOFF_AGENT_ID?: string; HANDOFF_ENV_ID?: string };
 
 const MAX_REP_TURNS = 8; // 練習は5分程度。長い雑談にしない
 const MAX_TEXT = 600;
@@ -27,6 +28,7 @@ const loadTurns = async (db: D1Database, sessionId: string): Promise<Turn[]> => 
 };
 
 app.route("/api", accountRoutes);
+app.route("/api", handoffRoutes);
 
 // 練習の相手と、取引先の記録を使うかどうか。記録の無い練習は比べるためにも残す
 const loadSessionRecord = async (db: D1Database, sessionId: string) => {

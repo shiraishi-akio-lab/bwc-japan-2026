@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { HandoffPage, HandoffStart } from "./Handoff";
 
 type AccountRow = { id: string; name: string; format: string; stores: number; owner_rep: string; buyer_count: number; last_met: string | null };
 type Account = { id: string; name: string; format: string; stores: number; profile: string; rules: string; owner_rep: string };
@@ -17,9 +18,10 @@ export type View =
   | { name: "account"; id: string }
   | { name: "buyer"; id: string }
   | { name: "meeting"; id: string }
-  | { name: "newMeeting"; buyerId: string };
+  | { name: "newMeeting"; buyerId: string }
+  | { name: "handoff"; id: string };
 
-async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+export async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const r = await fetch(path, {
     method,
     headers: { "content-type": "application/json" },
@@ -30,8 +32,8 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
   return data;
 }
 
-const box = { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" } as const;
-const link = { background: "none", border: "none", color: "#1a73e8", padding: 0, cursor: "pointer", font: "inherit", textAlign: "left" } as const;
+export const box = { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" } as const;
+export const link = { background: "none", border: "none", color: "#1a73e8", padding: 0, cursor: "pointer", font: "inherit", textAlign: "left" } as const;
 const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
 
 export function Accounts({ view, setView, onPractice }: { view: View; setView: (v: View) => void; onPractice: (buyerId: string) => void }) {
@@ -45,6 +47,7 @@ export function Accounts({ view, setView, onPractice }: { view: View; setView: (
       {view.name === "buyer" && <BuyerPage id={view.id} setView={setView} onError={setError} onPractice={onPractice} />}
       {view.name === "meeting" && <MeetingPage id={view.id} setView={setView} onError={setError} />}
       {view.name === "newMeeting" && <NewMeeting buyerId={view.buyerId} setView={setView} onError={setError} />}
+      {view.name === "handoff" && <HandoffPage id={view.id} setView={setView} onError={setError} onPractice={onPractice} />}
     </section>
   );
 }
@@ -95,6 +98,7 @@ function AccountPage({ id, setView, onError }: Nav & { id: string }) {
       ))}
       <h3>商談の記録</h3>
       <MeetingList meetings={meetings} setView={setView} />
+      <HandoffStart accountId={account.id} ownerRep={account.owner_rep} setView={setView} onError={onError} />
     </>
   );
 }
