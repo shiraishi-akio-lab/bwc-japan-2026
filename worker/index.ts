@@ -4,6 +4,7 @@ import { accountRoutes, buildRecord, buyerPersona, loadBuyer } from "./accounts"
 import { buyerOpening, buyerReply, check, decideNext, draftMinutes, organize, selectCards, splitTranscript, type Turn } from "./claude";
 import { approvedCases, cases } from "./data";
 import { handoffRoutes } from "./handoff";
+import { loadTurns, PREP_SCENARIO, prepRoutes } from "./prep";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string; HANDOFF_AGENT_ID?: string; HANDOFF_ENV_ID?: string };
 
@@ -19,16 +20,9 @@ app.get("/api/health", (c) => c.json({ ok: true, rubricAxes: rubric.axes.length,
 
 app.get("/api/rubric", (c) => c.json(rubric.axes.map(({ id, name, question }) => ({ id, name, question }))));
 
-const loadTurns = async (db: D1Database, sessionId: string): Promise<Turn[]> => {
-  const { results } = await db
-    .prepare("SELECT role, content FROM practice_messages WHERE session_id = ? ORDER BY id")
-    .bind(sessionId)
-    .all<Turn>();
-  return results;
-};
-
 app.route("/api", accountRoutes);
 app.route("/api", handoffRoutes);
+app.route("/api", prepRoutes);
 
 // 練習の相手と、取引先の記録を使うかどうか。記録の無い練習は比べるためにも残す
 const loadSessionRecord = async (db: D1Database, sessionId: string) => {
@@ -49,7 +43,7 @@ app.post("/api/practice", async (c) => {
   const opening = buyerOpening(found.buyer.name);
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO practice_sessions (id, scenario_id, buyer_id, use_record) VALUES (?, ?, ?, ?)")
-      .bind(id, "herb-soda-first-pitch", buyerId, useRecord ? 1 : 0),
+      .bind(id, "march-shelf-free", buyerId, useRecord ? 1 : 0),
     c.env.DB.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, 'buyer', ?)").bind(id, opening),
   ]);
   return c.json({ id, turns: [{ role: "buyer", content: opening }], buyerName: found.buyer.name });
@@ -66,6 +60,7 @@ app.post("/api/practice/:id/turn", async (c) => {
   const session = await loadSessionRecord(c.env.DB, id);
   if (!session) return c.json({ error: "練習が見つかりません" }, 404);
   if (session.scenario_id === RECORDING) return c.json({ error: "本番の振り返りには、発言を足せません" }, 409);
+  if (session.scenario_id === PREP_SCENARIO) return c.json({ error: "準備室の練習は、準備室の画面から続けてください" }, 409);
   const turns = await loadTurns(c.env.DB, id);
   if (turns.filter((t) => t.role === "rep").length >= MAX_REP_TURNS) {
     return c.json({ error: "この練習は終わりです。メモを書いて振り返りに進んでください" }, 409);

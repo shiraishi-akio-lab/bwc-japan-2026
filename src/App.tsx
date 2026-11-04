@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Accounts, type View } from "./Accounts";
 import { Organize } from "./Organize";
+import { PrepRoom } from "./Prep";
 import { Recording } from "./Recording";
 
 type Turn = { role: "rep" | "buyer"; content: string };
@@ -34,7 +35,7 @@ export function App() {
   const [result, setResult] = useState<AxisResult[] | null>(null);
   const [next, setNext] = useState<NextAction | null>(null);
   const [showMap, setShowMap] = useState(false);
-  const [mode, setMode] = useState<"practice" | "recording" | "organize" | "accounts">("practice");
+  const [mode, setMode] = useState<"prep" | "practice" | "recording" | "organize" | "accounts">("prep");
   const [view, setView] = useState<View>({ name: "list" });
   const [buyers, setBuyers] = useState<BuyerOption[]>([]);
   const [buyerId, setBuyerId] = useState("buyer-saeki");
@@ -105,14 +106,16 @@ export function App() {
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "32px auto", padding: "0 16px", lineHeight: 1.6 }}>
       <h1 style={{ marginBottom: 4 }}>隣席コーチ（仮）</h1>
-      <p style={{ marginTop: 0, color: "#555" }}>商談の前に5分、バイヤーを相手に練習する。結果は本人だけが見る。</p>
+      <p style={{ marginTop: 0, color: "#555" }}>商談の数日前に、得意先の得から話す準備をする。結果は本人だけが見る。</p>
       <nav style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setMode("prep")} disabled={mode === "prep"}>若手：商談の準備</button>
         <button onClick={() => setMode("practice")} disabled={mode === "practice"}>若手：練習する</button>
         <button onClick={() => setMode("recording")} disabled={mode === "recording"}>若手：本番を振り返る</button>
         <button onClick={() => setMode("organize")} disabled={mode === "organize"}>ベテラン：語りを残す</button>
         <button onClick={() => { setView({ name: "list" }); setMode("accounts"); }} disabled={mode === "accounts"}>取引先の記録</button>
       </nav>
 
+      {mode === "prep" && <PrepRoom />}
       {mode === "organize" && <Organize axisName={axisName} />}
       {mode === "recording" && <Recording buyers={buyers} onReady={fromRecording} />}
       {mode === "accounts" && (
@@ -125,7 +128,7 @@ export function App() {
       {!sessionId && (
         <section>
           <h2>今日の場面（架空）</h2>
-          <p>ミズナギ飲料の森川として、バイヤーに新商品「和ハーブ炭酸」を初めて提案します。</p>
+          <p>ミズナギ飲料の森川として、取引先のバイヤーに3月の棚割りを提案します。</p>
           <label style={{ display: "block", marginBottom: 8 }}>
             相手{" "}
             <select value={buyerId} onChange={(e) => setBuyerId(e.target.value)}>
