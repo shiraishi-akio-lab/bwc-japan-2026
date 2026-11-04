@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { buildRecord, buyerPersona, loadBuyer } from "./accounts";
+import { approvedCard, cardBody, DEMO_CARD_ID } from "./card";
 import { buyerOpening, buyerStaged, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, type BuyerMove, type Turn } from "./claude";
+import { cases } from "./data";
 import { agreementCondition, buyerShelfNotes, loadShelf, shelfCandidates, type ShelfItem } from "./shelf";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
@@ -119,7 +121,8 @@ prepRoutes.get("/preps/:id/judgment", async (c) => {
   if (p.stage === "opening") return c.json({ error: "先に、バイヤーの問いを受けてください" }, 409);
   const found = await loadBuyer(c.env.DB, p.buyer_id);
   const shelf = await loadShelf(c.env.DB, found!.account.id);
-  return c.json({ candidates: shelfCandidates(shelf) satisfies ShelfItem[] });
+  const card = approvedCard(cases, DEMO_CARD_ID);
+  return c.json({ candidates: shelfCandidates(shelf) satisfies ShelfItem[], card: card && cardBody(card) });
 });
 
 const preparedEnough = (p: PrepRow) => returnsOf(p).length >= MIN_RETURNS && p.landing.trim() !== "";

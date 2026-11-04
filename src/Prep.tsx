@@ -4,6 +4,11 @@ import { box, call, link } from "./Accounts";
 type Turn = { role: "rep" | "buyer"; content: string };
 type BuyerOption = { id: string; name: string; role: string; account_name: string };
 type PrepRow = { id: string; meeting_on: string; stage: string; buyer_name: string; account_name: string };
+type Candidate = { id: string; name: string; maker: string; is_own: number; facings: number; weekly_units: number; yoy_pct: number };
+type Card = {
+  id: string; title: string; situation: string; hypothesis: string; evidence: string; proposal: string; constraints: string;
+  result: string; nextJudgment: string; rejectedOptions: { option: string; reason: string }[]; author: string;
+};
 type Prep = {
   id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; meetingOn: string;
   gainAnswer: string; causeHypothesis: string; returns: string[]; landing: string; stage: string; turns: Turn[];
@@ -38,6 +43,7 @@ export function PrepRoom() {
           <button style={link} onClick={() => { window.location.hash = ""; setPrep(null); }}>← 別の準備を開く</button>
           <Gain prep={prep} onChange={setPrep} onError={setError} />
           {prep.gainAnswer && <Practice prep={prep} onChange={setPrep} onError={setError} />}
+          {prep.gainAnswer && prep.stage !== "opening" && <Judgment key={prep.id} prep={prep} onChange={setPrep} onError={setError} />}
         </>
       )}
     </section>
@@ -125,7 +131,7 @@ function Practice({ prep, onChange, onError }: Step) {
   };
   return (
     <>
-      <h2>止まる練習</h2>
+      <h2 id="practice">止まる練習</h2>
       <p style={{ color: "#555" }}>3月の棚割りの提案を、{prep.buyerName}に話してみてください。</p>
       <ol style={{ listStyle: "none", padding: 0 }}>
         {prep.turns.map((t, i) => (
@@ -145,6 +151,97 @@ function Practice({ prep, onChange, onError }: Step) {
           {busy && <span style={{ marginLeft: 8 }}>考えています…</span>}
         </>
       )}
+    </>
+  );
+}
+
+const CARD_SECTIONS = [
+  ["situation", "状況"], ["hypothesis", "仮説"], ["evidence", "根拠"], ["proposal", "提案"],
+  ["constraints", "制約"], ["result", "結果"], ["nextJudgment", "次の判断"],
+] as const;
+
+const cell = { padding: "4px 8px", borderBottom: "1px solid #ddd", textAlign: "left" } as const;
+
+// ベテランの判断：若手が問いを受けて答えた後に見る。出すかどうかはサーバーが決める
+function Judgment({ prep, onChange, onError }: Step) {
+  const [data, setData] = useState<{ candidates: Candidate[]; card: Card | null } | null>(null);
+  const show = useCallback(
+    () => call<{ candidates: Candidate[]; card: Card | null }>(`/api/preps/${prep.id}/judgment`).then(setData).catch((e: Error) => onError(e.message)),
+    [prep.id, onError],
+  );
+  const preparing = prep.stage !== "asked";
+  useEffect(() => { if (preparing) void show(); }, [preparing, show]);
+
+  if (!data) return <p><button onClick={show}>ベテランの判断を見る</button></p>;
+  return (
+    <>
+      <h2>ベテランの判断</h2>
+      <h3>棚の候補（週販の低い順）</h3>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+          <thead>
+            <tr>{["品名", "メーカー", "列数", "週販（1店）", "前年比"].map((h) => <th key={h} style={cell}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {data.candidates.map((c) => (
+              <tr key={c.id} style={c.is_own ? { background: "#fff7e0" } : undefined}>
+                <td style={cell}>{c.name}{c.is_own ? "【自社品】" : ""}</td>
+                <td style={cell}>{c.maker}</td>
+                <td style={cell}>{c.facings}</td>
+                <td style={cell}>{c.weekly_units}本</td>
+                <td style={cell}>{c.yoy_pct}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {data.card ? (
+        <div style={box}>
+          <strong>{data.card.title}</strong>
+          {CARD_SECTIONS.map(([k, label]) => (
+            <p key={k} style={{ margin: "8px 0", whiteSpace: "pre-wrap" }}><small style={{ color: "#555" }}>{label}</small><br />{data.card![k]}</p>
+          ))}
+          {data.card.rejectedOptions.length > 0 && <small style={{ color: "#555" }}>退けた案</small>}
+          {data.card.rejectedOptions.map((r) => <p key={r.option} style={{ margin: "4px 0" }}>{r.option}：{r.reason}</p>)}
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#555" }}>{data.card.id}／{data.card.author}</p>
+        </div>
+      ) : (
+        <p style={{ color: "#777" }}>カード準備中</p>
+      )}
+      <Returns prep={prep} onChange={onChange} onError={onError} />
+    </>
+  );
+}
+
+// 返しを用意して答え直す。新しい商談は作らず、同じ商談の続きに戻る
+function Returns({ prep, onChange, onError }: Step) {
+  const [returns, setReturns] = useState([0, 1, 2].map((i) => prep.returns[i] ?? ""));
+  const [landing, setLanding] = useState(prep.landing);
+  const ready = returns.filter((r) => r.trim()).length >= 2 && landing.trim() !== "";
+  const retry = async () => {
+    try {
+      await call(`/api/preps/${prep.id}`, "PATCH", { returns, landing });
+      onChange(await call<Prep>(`/api/preps/${prep.id}/retry`, "POST"));
+      document.getElementById("practice")?.scrollIntoView();
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+  return (
+    <>
+      <h2>返しを用意する</h2>
+      <p style={{ color: "#555" }}>断られても次が出せるよう、返しを2〜3本と、落としどころを書きます。「自社品を外す」は返しの1本です。</p>
+      {returns.map((r, i) => (
+        <label key={i} style={{ display: "block", marginBottom: 8 }}>
+          返し{i + 1}{i === 2 && <small style={{ color: "#777" }}>（任意）</small>}
+          <textarea value={r} onChange={(e) => setReturns(returns.map((x, j) => (j === i ? e.target.value : x)))} rows={2} style={{ width: "100%" }} />
+        </label>
+      ))}
+      <label style={{ display: "block", marginBottom: 8 }}>
+        落としどころ
+        <textarea value={landing} onChange={(e) => setLanding(e.target.value)} rows={2} style={{ width: "100%" }} />
+      </label>
+      <button onClick={retry} disabled={!ready}>同じ商談の続きで答え直す</button>
     </>
   );
 }
