@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Accounts, type View } from "./Accounts";
 import { Organize } from "./Organize";
 import { Recording } from "./Recording";
 
@@ -10,7 +11,8 @@ type AxisResult = {
   missing: { text: string; caseIds: string[] }[];
   unknown: boolean;
 };
-type NextAction = { axis: string; action: string; reason: string; caseId: string; tryLine: string; otherCount: number };
+type NextAction = { axis: string; action: string; reason: string; caseId: string; tryLine: string; otherCount: number; insufficient?: boolean };
+type BuyerOption = { id: string; name: string; role: string; account_name: string };
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(path, {
@@ -32,13 +34,20 @@ export function App() {
   const [result, setResult] = useState<AxisResult[] | null>(null);
   const [next, setNext] = useState<NextAction | null>(null);
   const [showMap, setShowMap] = useState(false);
-  const [mode, setMode] = useState<"practice" | "recording" | "organize">("practice");
+  const [mode, setMode] = useState<"practice" | "recording" | "organize" | "accounts">("practice");
+  const [view, setView] = useState<View>({ name: "list" });
+  const [buyers, setBuyers] = useState<BuyerOption[]>([]);
+  const [buyerId, setBuyerId] = useState("buyer-saeki");
+  const [useRecord, setUseRecord] = useState(true);
+  const [buyerName, setBuyerName] = useState("バイヤー役");
+  const [meetingId, setMeetingId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api<Axis[]>("/api/rubric").then(setAxes).catch((e: Error) => setError(e.message));
+    api<BuyerOption[]>("/api/buyers").then(setBuyers).catch((e: Error) => setError(e.message));
   }, []);
 
   const run = async (fn: () => Promise<void>) => {
@@ -55,16 +64,19 @@ export function App() {
 
   const start = () =>
     run(async () => {
-      const s = await api<{ id: string; turns: Turn[] }>("/api/practice", {});
+      const s = await api<{ id: string; turns: Turn[]; buyerName: string }>("/api/practice", { buyerId, useRecord });
       setSessionId(s.id);
       setTurns(s.turns);
+      setBuyerName(s.buyerName);
+      setMeetingId(null);
       setIsRecording(false);
       setResult(null);
       setNext(null);
     });
 
   // 本番の文字起こしを読み込んだら、練習と同じ画面で「確かめる」に進む
-  const fromRecording = (id: string, t: Turn[]) => {
+  const fromRecording = (id: string, t: Turn[], meeting: string | null) => {
+    setMeetingId(meeting);
     setSessionId(id);
     setTurns(t);
     setIsRecording(true);
@@ -94,14 +106,18 @@ export function App() {
     <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "32px auto", padding: "0 16px", lineHeight: 1.6 }}>
       <h1 style={{ marginBottom: 4 }}>隣席コーチ（仮）</h1>
       <p style={{ marginTop: 0, color: "#555" }}>商談の前に5分、バイヤーを相手に練習する。結果は本人だけが見る。</p>
-      <nav style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <nav style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={() => setMode("practice")} disabled={mode === "practice"}>若手：練習する</button>
         <button onClick={() => setMode("recording")} disabled={mode === "recording"}>若手：本番を振り返る</button>
         <button onClick={() => setMode("organize")} disabled={mode === "organize"}>ベテラン：語りを残す</button>
+        <button onClick={() => { setView({ name: "list" }); setMode("accounts"); }} disabled={mode === "accounts"}>取引先の記録</button>
       </nav>
 
       {mode === "organize" && <Organize axisName={axisName} />}
-      {mode === "recording" && <Recording onReady={fromRecording} />}
+      {mode === "recording" && <Recording buyers={buyers} onReady={fromRecording} />}
+      {mode === "accounts" && (
+        <Accounts view={view} setView={setView} onPractice={(id) => { setBuyerId(id); setSessionId(null); setResult(null); setNext(null); setMode("practice"); }} />
+      )}
 
       {mode === "practice" && <>
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
@@ -109,7 +125,16 @@ export function App() {
       {!sessionId && (
         <section>
           <h2>今日の場面（架空）</h2>
-          <p>ミズナギ飲料の森川として、ハルカゼドラッグのバイヤー佐伯さんに、新商品「和ハーブ炭酸」を初めて提案します。</p>
+          <p>ミズナギ飲料の森川として、バイヤーに新商品「和ハーブ炭酸」を初めて提案します。</p>
+          <label style={{ display: "block", marginBottom: 8 }}>
+            相手{" "}
+            <select value={buyerId} onChange={(e) => setBuyerId(e.target.value)}>
+              {buyers.map((b) => <option key={b.id} value={b.id}>{b.account_name}　{b.name}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "block", marginBottom: 8 }}>
+            <input type="checkbox" checked={useRecord} onChange={(e) => setUseRecord(e.target.checked)} /> 取引先の記録を使う
+          </label>
           <button onClick={start} disabled={busy}>練習を始める</button>
         </section>
       )}
@@ -117,10 +142,16 @@ export function App() {
       {sessionId && (
         <section>
           <h2>{isRecording ? "1. 本番の商談（文字起こし）" : "1. 練習"}</h2>
+          {meetingId && (
+            <p style={{ fontSize: 14 }}>
+              議事録の下書きを作りました。
+              <button onClick={() => { setView({ name: "meeting", id: meetingId }); setMode("accounts"); }} style={{ marginLeft: 8 }}>議事録を開く</button>
+            </p>
+          )}
           <ol style={{ listStyle: "none", padding: 0 }}>
             {turns.map((t, i) => (
               <li key={i} style={{ margin: "8px 0", textAlign: t.role === "rep" ? "right" : "left" }}>
-                <span style={{ fontSize: 12, color: "#777" }}>{t.role === "rep" ? "あなた" : isRecording ? "バイヤー" : "佐伯（バイヤー役）"}</span>
+                <span style={{ fontSize: 12, color: "#777" }}>{t.role === "rep" ? "あなた" : isRecording ? "バイヤー" : `${buyerName}（バイヤー役）`}</span>
                 <div style={{ display: "inline-block", padding: "8px 12px", borderRadius: 8, background: t.role === "rep" ? "#e8f0fe" : "#f1f3f4", maxWidth: "85%", textAlign: "left" }}>
                   {t.content}
                 </div>
@@ -154,7 +185,7 @@ export function App() {
         <section>
           <h2>3. 次に鍛える一行動</h2>
           <div style={{ border: "2px solid #1a73e8", borderRadius: 8, padding: 16 }}>
-            <small style={{ color: "#555" }}>{axisName(next.axis)}</small>
+            {!next.insufficient && <small style={{ color: "#555" }}>{axisName(next.axis)}</small>}
             <p style={{ fontSize: 18, fontWeight: 600, margin: "4px 0 8px" }}>{next.action}</p>
             <p style={{ margin: "0 0 8px" }}>次の練習で言ってみる：「{next.tryLine}」</p>
             <p style={{ margin: 0, fontSize: 14, color: "#444" }}>

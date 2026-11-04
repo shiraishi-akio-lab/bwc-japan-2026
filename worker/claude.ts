@@ -14,36 +14,31 @@ const FALLBACK = {
 
 export type Turn = { role: "rep" | "buyer"; content: string };
 
-export const BUYER_OPENING = "佐伯です。今日は15分しか取れないので、手短にお願いします。";
+export const buyerOpening = (name: string) => `${name.replace(/（架空）$/, "")}です。今日は15分しか取れないので、手短にお願いします。`;
 
-// 指示文は毎回同じ文字列にする（先頭一致でキャッシュが効く）
-const BUYER_SYSTEM = `あなたは商談練習用の「バイヤー役」です。架空のドラッグストアチェーンのバイヤー、佐伯として、メーカーの若手営業と話します。
+// 指示文は毎回同じ文字列にする（先頭一致でキャッシュが効く）。相手ごとの設定は別のブロックで渡す
+const BUYER_SYSTEM = `あなたは商談練習用の「バイヤー役」です。架空の小売チェーンのバイヤーとして、メーカーの若手営業と話します。
 
-## 舞台（すべて架空）
-${JSON.stringify(world, null, 2)}
-
-## 佐伯が知っていて、自分からは言わないこと
-相手が的確に聞いてきたときだけ、短く答える。聞かれなければ言わない。
-- 飲料の棚で、動きの悪い商品が2〜3品ある（入れ替え候補）。
-- 次の棚割り改定は3月。決めるのはその2か月前まで。
-- 今年は「健康を軸にした売場」で来店頻度を上げたい。無糖・機能性の棚を見直している。
-- PB の無糖炭酸の粗利は守りたい。PB と正面から並ぶ提案は通しにくい。
-- 店は少人数。売場替えや大きな陳列は、作業が増えるなら断る。
-- 他社からも夏の値引き企画を受けている。
+## メーカー側の舞台（すべて架空）
+${JSON.stringify({ maker: world.maker, rep: world.people.rep }, null, 2)}
 
 ## 話し方
-- 日本語。1回の発言は1〜3文。忙しいバイヤーとして自然に話す。
+- 日本語。1回の発言は1〜3文。忙しいバイヤーとして自然に話す。発言の中身だけを書く（名前やかぎ括弧を付けない）。
+- 「演じる相手」の「自分からは言わないこと」は、相手が的確に聞いてきたときだけ短く答える。聞かれなければ言わない。
+- 「今大事にしていること」があるときは、それに結びつく話には身を乗り出し、結びつかない話には関心を示さない。ただし、自分から明かしはしない。
 - 値引き・商品紹介だけの話には、遠慮なく耳の痛いことを言う（例：「それ、他のチェーンにも同じ話をしていますよね」）。
-- 相手が質問してきたら、それには答える。答えに数字が要るときは、舞台にある範囲だけを使う。無いものは「今は手元に無い」と言う。
+- 相手が質問してきたら、それには答える。答えに数字が要るときは、与えられた範囲だけを使う。無いものは「今は手元に無い」と言う。
 - あなたは教える役ではない。助言・採点・正解の説明をしない。商談の相手として振る舞うだけ。
 - 実在の企業・人物・地域の名前を出さない。`;
 
 const client = (apiKey: string) => new Anthropic({ apiKey });
 
+const recordBlock = (record: string) => (record ? `\n\n## 取引先の記録（人が確定したもの）\n${record}` : "");
+
 const toMessages = (turns: Turn[]): Anthropic.Beta.BetaMessageParam[] =>
   turns.map((t) => ({ role: t.role === "rep" ? "user" : "assistant", content: t.content }));
 
-export async function buyerReply(apiKey: string, turns: Turn[]): Promise<string> {
+export async function buyerReply(apiKey: string, turns: Turn[], persona: string): Promise<string> {
   // 冒頭のバイヤーの挨拶は固定文。API には若手の発言から渡す
   const history = turns[0]?.role === "buyer" ? turns.slice(1) : turns;
   const res = await client(apiKey).beta.messages.create({
@@ -51,7 +46,10 @@ export async function buyerReply(apiKey: string, turns: Turn[]): Promise<string>
     max_tokens: 2000,
     ...FALLBACK,
     output_config: { effort: "low" },
-    system: [{ type: "text", text: BUYER_SYSTEM, cache_control: { type: "ephemeral" } }],
+    system: [
+      { type: "text", text: BUYER_SYSTEM, cache_control: { type: "ephemeral" } },
+      { type: "text", text: persona },
+    ],
     messages: toMessages(history),
   });
   if (res.stop_reason === "refusal") throw new Error("バイヤー役の応答が得られませんでした");
@@ -69,12 +67,12 @@ const MAX_PICKS = 3;
 const SELECT_SYSTEM = `あなたは商談練習の「カードを選ぶ係」です。練習の記録を読み、ベテランの判断の記録（ケースカード）のうち、この記録の場面に当てはまるものだけを選びます。
 
 ## 選び方
-- 各カードの appliesWhen（効く条件）が、この記録の中で実際に起きているかで判断する。記録に手がかり（相手の言葉・提案の種類・相手の事情）が無いものは選ばない。
+- 各カードの appliesWhen（効く条件）が、この記録の中で実際に起きているかで判断する。練習の記録と取引先の記録のどちらにも手がかり（相手の言葉・提案の種類・相手の事情）が無いものは選ばない。
 - 「どんな商談にも言える」という理由では選ばない。
 - 最大${MAX_PICKS}枚。当てはまるものが無ければ、picks は空にする。
 - why には、記録のどの発言・どの事情が効く条件に当たるかを1文で書く。日本語。`;
 
-export async function selectCards(apiKey: string, turns: Turn[], cards: CaseCard[]): Promise<CaseCard[]> {
+export async function selectCards(apiKey: string, turns: Turn[], cards: CaseCard[], record = ""): Promise<CaseCard[]> {
   if (cards.length === 0) return [];
   const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
   const index = cards.map(({ id, scene, appliesWhen, situation }) => ({ id, scene, appliesWhen, situation }));
@@ -84,7 +82,7 @@ export async function selectCards(apiKey: string, turns: Turn[], cards: CaseCard
     ...FALLBACK,
     output_config: { effort: "low", format: zodOutputFormat(SelectSchema) },
     system: [{ type: "text", text: SELECT_SYSTEM, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: `## ケースカード\n${JSON.stringify(index, null, 2)}\n\n## 練習の記録\n${transcript}` }],
+    messages: [{ role: "user", content: `## ケースカード\n${JSON.stringify(index, null, 2)}${recordBlock(record)}\n\n## 練習の記録\n${transcript}` }],
   });
   if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("カードを選ぶ係の応答が得られませんでした");
   const byId = new Map(cards.map((c) => [c.id, c]));
@@ -120,10 +118,11 @@ ${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 - 「できていること」は、記録の中の若手の発言をそのまま quote に引く。引けないものは書かない。
 - 「抜けていること」には、根拠になるケースカードの id を caseIds に入れる。当てはまるカードが無ければ空にする。
 - 記録が短いなどで、その軸を判断する材料が無いときは unknown を true にし、done と missing は空にする。推測で埋めない。
+- 取引先の記録があるときは、そこにある相手の「今大事にしていること」や「次回の約束」を若手が踏まえたかも見る。
 - 点数・順位・総合評価は出さない。人を評価する言葉（優秀、未熟など）を使わない。
 - 1項目は1文。日本語。`;
 
-export async function check(apiKey: string, turns: Turn[], memo: string, cards: CaseCard[]): Promise<CheckResult> {
+export async function check(apiKey: string, turns: Turn[], memo: string, cards: CaseCard[], record = ""): Promise<CheckResult> {
   const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
   const res = await client(apiKey).beta.messages.parse({
     model: MODEL,
@@ -131,7 +130,7 @@ export async function check(apiKey: string, turns: Turn[], memo: string, cards: 
     ...FALLBACK,
     output_config: { effort: "high", format: zodOutputFormat(CheckSchema) },
     system: [{ type: "text", text: checkSystem(cards), cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: `## 練習の記録\n${transcript}\n\n## 3分メモ\n${memo || "（未記入）"}` }],
+    messages: [{ role: "user", content: `## 練習の記録\n${transcript}\n\n## 3分メモ\n${memo || "（未記入）"}${recordBlock(record)}` }],
   });
   if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("確かめる係の応答が得られませんでした");
   return enforceSources(res.parsed_output, turns, cards);
@@ -170,6 +169,7 @@ ${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 - 上のケースカードは、この場面に当てはまるとして選ばれたものです。カードがあるときは、そのカードの nextJudgment（ベテランの次の判断）を出発点にして、この若手が次の練習でできる一行動に直す。一般論に言い換えない。
 - 「提案の前に聞く」「相手の反対を言い換える」のような土台を選んでよいのは、記録の中の若手の発言から、土台が崩れていることが読み取れるときだけ。記録に書かれていない、というだけでは選ばない。
 - カードが無いときは、若手の今の理解に合わせる。土台が抜けているなら土台を、できているなら一段上の行動を選ぶ。
+- 取引先の記録があるときは、相手の「今大事にしていること」に結びつく形で一行動を書く。
 - 練習の記録でバイヤーが反発した場面に結びつくものを優先する（本人が手応えとして覚えている所から直す）。
 - 次の練習1回でできる大きさにする。「お客様理解を深める」のような広い言葉にしない。
 - caseId には、その行動の手本になるケースカードの id を1つ入れる。当てはまるものが無ければ空にする。
@@ -177,7 +177,7 @@ ${cards.length > 0 ? JSON.stringify(cards, null, 2) : "（なし）"}
 - reason は1文。なぜ今これなのかを、記録の場面に触れて書く。
 - 点数・人を評価する言葉は使わない。日本語。`;
 
-export async function decideNext(apiKey: string, turns: Turn[], result: CheckResult, cards: CaseCard[]): Promise<NextAction> {
+export async function decideNext(apiKey: string, turns: Turn[], result: CheckResult, cards: CaseCard[], record = ""): Promise<NextAction> {
   const missing = result.axes.flatMap((a) => a.missing.map((m) => ({ axis: a.axis, ...m })));
   if (missing.length === 0) return INSUFFICIENT;
   const transcript = turns.map((t) => `${t.role === "rep" ? "若手" : "バイヤー"}：${t.content}`).join("\n");
@@ -190,7 +190,7 @@ export async function decideNext(apiKey: string, turns: Turn[], result: CheckRes
     messages: [
       {
         role: "user",
-        content: `## 練習の記録\n${transcript}\n\n## 確かめる係の結果\n${JSON.stringify(result.axes, null, 2)}`,
+        content: `## 練習の記録\n${transcript}\n\n## 確かめる係の結果\n${JSON.stringify(result.axes, null, 2)}${recordBlock(record)}`,
       },
     ],
   });
@@ -288,6 +288,44 @@ export async function organize(apiKey: string, story: string): Promise<CardDraft
   });
   if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("整理する係の応答が得られませんでした");
   return res.parsed_output;
+}
+
+// 議事録の下書き：文字起こしから、要約・決定事項・残った論点・次回の約束・今大事にしていることの候補を抜き出す（確定は人）
+const MinutesSchema = z.object({
+  summary: z.string(),
+  decisions: z.array(z.string()),
+  openIssues: z.array(z.string()),
+  promises: z.array(z.object({ text: z.string(), due: z.string() })),
+  priorities: z.array(z.object({ text: z.string(), basis: z.string() })),
+});
+export type MinutesDraft = z.infer<typeof MinutesSchema>;
+
+const MINUTES_SYSTEM = `あなたは商談の議事録の下書きを作る係です。文字起こしを読み、次の項目を埋めます。確定するのは人です。
+
+## 書き方の決まり
+- 文字起こしに書かれていることだけを使う。推測で埋めない。無い項目は空にする。
+- summary は2〜3文。何の商談で、どうなったか。
+- decisions は、双方が合意して決まったことだけ。提案しただけのものは入れない。
+- openIssues は、結論が出ずに残った論点。
+- promises は、次回までにどちらかがやると言ったこと。due は発言に期日があれば書き、無ければ空にする。
+- priorities は、バイヤーが今大事にしていること（売上・粗利・在庫・作業の負担・客層など）。basis にはバイヤーの発言をそのまま引く。バイヤーの発言に根拠が無いものは書かない。
+- 日本語。人を評価する言葉を使わない。`;
+
+export async function draftMinutes(apiKey: string, turns: Turn[]): Promise<MinutesDraft> {
+  const transcript = turns.map((t) => `${t.role === "rep" ? "営業" : "バイヤー"}：${t.content}`).join("\n");
+  const res = await client(apiKey).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 8000,
+    ...FALLBACK,
+    output_config: { effort: "medium", format: zodOutputFormat(MinutesSchema) },
+    system: [{ type: "text", text: MINUTES_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: `## 文字起こし\n${transcript}` }],
+  });
+  const out = res.parsed_output;
+  if (res.stop_reason === "refusal" || !out) throw new Error("議事録の下書きを作れませんでした");
+  // 根拠の引用が相手の発言に無いものは落とす
+  const said = turns.filter((t) => t.role === "buyer").map((t) => t.content).join("\n");
+  return { ...out, priorities: out.priorities.filter((p) => p.basis.trim() !== "" && said.includes(p.basis.trim())) };
 }
 
 // 出典の決まりはコードで守らせる：引用が記録に無い・カード id が存在しない、は落とす
