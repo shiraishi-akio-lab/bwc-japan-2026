@@ -121,7 +121,7 @@ export function App() {
 
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "32px auto", padding: "0 16px", lineHeight: 1.6 }}>
-      <h1 style={{ marginBottom: 4 }}>隣席コーチ（仮）</h1>
+      <h1 style={{ marginBottom: 4 }}>隣席コーチ</h1>
       <p style={{ marginTop: 0, color: "#555" }}>商談の数日前に、得意先の得から話す準備をする。結果は本人だけが見る。</p>
       <nav style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={() => setMode("prep")} disabled={mode === "prep"}>若手：商談の準備</button>
