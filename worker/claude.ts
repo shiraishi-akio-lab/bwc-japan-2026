@@ -59,6 +59,58 @@ export async function buyerReply(apiKey: string, turns: Turn[], persona: string)
     .trim();
 }
 
+// 準備室のバイヤー役。段階はコードが持ち、立場もコードが決める。Claude は決められた立場で文面を書く
+export const KEY_QUESTION = "どれを外すの？"; // 挨拶と同じく固定文
+export const RETRY_LINE = "では、改めて聞きます。どれを外すの？";
+export const ROUND_END_LINE = "今日はここまでにしましょう。返しを練り直して、もう一度来てください。";
+
+export type BuyerMove = "push" | "refuse" | "hold" | "agree";
+
+const MOVE_INSTRUCTION: Record<BuyerMove, string> = {
+  push: "若手は「どれを外すの？」に答えようとしています。まだ準備が足りない答えとして受け止め、棚の事情から1点だけ詰めてください。どの品を外せばよいかの答えを教えない。品名を挙げない。受け入れない。accepted は false。",
+  refuse:
+    "若手が準備した1本目の返しを言いました。どんなに筋が良くても、今回は受けずに断ってください。断る理由は、棚の事情の中から店の言葉で1つだけ言う。「どれを外すの」とは聞き直さない。次の案を促すかどうかは任せる。accepted は false。",
+  hold: "若手の言葉は、どの品をどうするかがまだ具体的ではありません。受け入れず、どの品をどうするのかを短く聞き返してください。accepted は false。",
+  agree:
+    "若手が2本目の返しを言いました。この案なら受けられます。若手が言った線の範囲で「それなら」と合意し、確認したい条件を1つだけ付けてください。若手が言っていない数字や条件を足さない。accepted は true。",
+};
+
+// Claude の立場が段階とずれたときの固定文（文面が2回ずれた場合だけ使う）
+const MOVE_FALLBACK: Record<BuyerMove, string> = {
+  push: "それだと棚のどこが空くのか見えません。",
+  refuse: "その案のままでは受けられません。店の作業が増えるのに、売れる根拠がまだ見えないです。",
+  hold: "どの品を、どうするという話ですか。",
+  agree: "それなら、その線で検討します。社内で確認してから、もう一度持ってきてください。",
+};
+
+const StagedSchema = z.object({ reply: z.string(), accepted: z.boolean() });
+
+// avoid：若手がまだ口にしていない棚の品名。問いの段階でバイヤーが答えを先に言わないようにする
+export async function buyerStaged(apiKey: string, turns: Turn[], persona: string, shelfNotes: string, move: BuyerMove, avoid: string[] = []): Promise<string> {
+  const history = turns[0]?.role === "buyer" ? turns.slice(1) : turns;
+  const stage = `## 棚の事情（あなただけが知っていること）\n${shelfNotes}\n\n粗利の数字や改廃の予定は、そのまま口に出さない。\n\n## 今の段階\n${MOVE_INSTRUCTION[move]}\n\nreply には発言の中身だけを書く。`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await client(apiKey).beta.messages.parse({
+      model: MODEL,
+      max_tokens: 2000,
+      ...FALLBACK,
+      output_config: { effort: "low", format: zodOutputFormat(StagedSchema) },
+      system: [
+        { type: "text", text: BUYER_SYSTEM, cache_control: { type: "ephemeral" } },
+        { type: "text", text: persona },
+        { type: "text", text: stage },
+      ],
+      messages: toMessages(history),
+    });
+    const out = res.parsed_output;
+    if (res.stop_reason === "refusal" || !out) throw new Error("バイヤー役の応答が得られませんでした");
+    const repeated = move !== "push" && out.reply.includes("どれを外す");
+    const leaked = avoid.some((n) => out.reply.includes(n));
+    if (out.reply.trim() && out.accepted === (move === "agree") && !repeated && !leaked) return out.reply.trim();
+  }
+  return MOVE_FALLBACK[move];
+}
+
 // 選ぶ係：カードを全部渡すと、どの場面にも当てはまるチェックリストとして使われてしまう。
 // 「効く条件」がこの記録に当てはまるカードだけを先に選び、確かめる係と次を決める係にはそれだけを渡す
 const SelectSchema = z.object({ picks: z.array(z.object({ caseId: z.string(), why: z.string() })) });

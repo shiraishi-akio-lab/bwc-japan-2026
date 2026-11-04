@@ -14,6 +14,27 @@ export const shelfCandidates = (items: ShelfItem[]): ShelfItem[] =>
     .sort((a, b) => a.weekly_units - b.weekly_units || a.yoy_pct - b.yoy_pct || a.id.localeCompare(b.id))
     .slice(0, MAX_CANDIDATES);
 
+const normalize = (s: string) => s.replace(/[\s、。，．,.！？!?「」『』（）()・]/g, "");
+const bigrams = (s: string) => new Set(Array.from({ length: Math.max(s.length - 1, 0) }, (_, i) => s.slice(i, i + 2)));
+
+// 用意した文のうち、発言に出てきた2文字の割合
+const overlap = (said: string, prepared: string) => {
+  const target = bigrams(normalize(prepared));
+  if (target.size === 0) return 0;
+  const heard = bigrams(normalize(said));
+  return [...target].filter((b) => heard.has(b)).length / target.size;
+};
+
+const MIN_OVERLAP = 0.5;
+const TRIAL_WORDS = /試す|試して|試し|期間を|期間限定/;
+
+// バイヤー役が2本目で合意する条件：棚の品を名指ししている／試す線を出している／用意した返しか落としどころを言っている。
+// 値引きのお願いや、準備の無い一言では合意しない
+export const agreementCondition = (said: string, shortNames: string[], returns: string[], landing: string): boolean =>
+  shortNames.some((n) => said.includes(n)) ||
+  TRIAL_WORDS.test(said) ||
+  [...returns, landing].some((t) => overlap(said, t) >= MIN_OVERLAP);
+
 export const loadShelf = async (db: D1Database, accountId: string): Promise<ShelfItem[]> => {
   const { results } = await db
     .prepare("SELECT id, name, short_name, maker, is_own, is_pb, facings, weekly_units, yoy_pct FROM shelf_items WHERE account_id = ?")

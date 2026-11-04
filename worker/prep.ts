@@ -1,13 +1,15 @@
 import { Hono } from "hono";
-import { loadBuyer } from "./accounts";
-import { buyerOpening, type Turn } from "./claude";
-import { loadShelf, shelfCandidates, type ShelfItem } from "./shelf";
+import { buildRecord, buyerPersona, loadBuyer } from "./accounts";
+import { buyerOpening, buyerStaged, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, type BuyerMove, type Turn } from "./claude";
+import { agreementCondition, buyerShelfNotes, loadShelf, shelfCandidates, type ShelfItem } from "./shelf";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
 
 export const PREP_SCENARIO = "march-shelf-prep";
 const MAX_TEXT = 600;
 const MAX_RETURNS = 3;
+const MIN_RETURNS = 2;
+const ROUND_LIMIT = 5; // 1回に若手が話せる回数。超える前に固定文で閉じる＝答え直せば何度でも続く
 
 export type Stage = "opening" | "asked" | "retry" | "refused" | "agreed" | "ended";
 type PrepRow = {
@@ -118,4 +120,69 @@ prepRoutes.get("/preps/:id/judgment", async (c) => {
   const found = await loadBuyer(c.env.DB, p.buyer_id);
   const shelf = await loadShelf(c.env.DB, found!.account.id);
   return c.json({ candidates: shelfCandidates(shelf) satisfies ShelfItem[] });
+});
+
+const preparedEnough = (p: PrepRow) => returnsOf(p).length >= MIN_RETURNS && p.landing.trim() !== "";
+
+// 止まる練習。何を返すかは段階で決まる。1本目は断り、2本目は条件を満たせば合意する
+prepRoutes.post("/preps/:id/turn", async (c) => {
+  const db = c.env.DB;
+  const p = await loadPrep(db, c.req.param("id"));
+  if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  const { text: raw } = await c.req.json<{ text?: string }>();
+  const said = (raw ?? "").trim();
+  if (!said || said.length > MAX_TEXT) return c.json({ error: `発言は1〜${MAX_TEXT}字で入力してください` }, 400);
+  if (!p.gain_answer.trim()) return c.json({ error: "先に、相手の得は何かを書いてください" }, 409);
+  if (p.stage === "agreed" || p.stage === "ended") return c.json({ error: "この回は終わりです。答え直すか、相談文に進んでください" }, 409);
+
+  const found = (await loadBuyer(db, p.buyer_id))!;
+  const shelf = await loadShelf(db, found.account.id);
+  const rounds = p.round_turns + 1;
+  const atLimit = rounds >= ROUND_LIMIT;
+  const agreed = p.stage === "refused" && agreementCondition(said, shelf.map((i) => i.short_name), returnsOf(p), p.landing);
+
+  let stage: Stage;
+  let move: BuyerMove | "question" | "closed";
+  if (p.stage === "opening") [stage, move] = ["asked", "question"];
+  else if (p.stage === "retry") [stage, move] = ["refused", "refuse"];
+  else if (agreed) [stage, move] = ["agreed", "agree"];
+  else if (atLimit) [stage, move] = ["ended", "closed"];
+  else if (p.stage === "asked") [stage, move] = ["asked", "push"];
+  else [stage, move] = ["refused", "hold"];
+
+  let reply: string;
+  if (move === "question") reply = KEY_QUESTION;
+  else if (move === "closed") reply = ROUND_END_LINE;
+  else {
+    const key = c.env.ANTHROPIC_API_KEY;
+    if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
+    const record = await buildRecord(db, found.buyer, found.account);
+    const turns: Turn[] = [...(await loadTurns(db, p.session_id)), { role: "rep", content: said }];
+    const repSaid = turns.filter((t) => t.role === "rep").map((t) => t.content).join("\n");
+    const avoid = move === "push" ? shelf.map((i) => i.short_name).filter((n) => !repSaid.includes(n)) : [];
+    reply = await buyerStaged(key, turns, buyerPersona(found.buyer, found.account, record), await buyerShelfNotes(db, found.account.id), move, avoid);
+  }
+
+  await db.batch([
+    db.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, 'rep', ?)").bind(p.session_id, said),
+    db.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, 'buyer', ?)").bind(p.session_id, reply),
+    db.prepare("UPDATE preps SET stage = ?, round_turns = ?, updated_at = datetime('now') WHERE id = ?").bind(stage, rounds, p.id),
+  ]);
+  return c.json({ move, prep: await prepView(db, (await loadPrep(db, p.id))!) });
+});
+
+// 答え直す：同じセッションの続きに、もう一度問いを置く。新しい商談は作らない
+prepRoutes.post("/preps/:id/retry", async (c) => {
+  const db = c.env.DB;
+  const p = await loadPrep(db, c.req.param("id"));
+  if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  if (p.stage === "opening") return c.json({ error: "先に、バイヤーの問いを受けてください" }, 409);
+  if (!preparedEnough(p)) return c.json({ error: `返しを${MIN_RETURNS}本以上と、落としどころを書いてください` }, 400);
+  if (p.stage !== "retry") {
+    await db.batch([
+      db.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, 'buyer', ?)").bind(p.session_id, RETRY_LINE),
+      db.prepare("UPDATE preps SET stage = 'retry', round_turns = 0, updated_at = datetime('now') WHERE id = ?").bind(p.id),
+    ]);
+  }
+  return c.json(await prepView(db, (await loadPrep(db, p.id))!));
 });
