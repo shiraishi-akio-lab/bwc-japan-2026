@@ -73,6 +73,7 @@ ok(agreementCondition("まず数店で試して判断を", names, [], ""), "試�
 ok(agreementCondition(SCRIPT.landing, names, [], SCRIPT.landing), "落としどころを言えば合意の条件を満たす");
 ok(!agreementCondition("では値引きします", names, SCRIPT.returns, SCRIPT.landing), "値引きだけでは合意しない");
 ok(!agreementCondition("えっと、その", names, SCRIPT.returns, SCRIPT.landing), "準備の無い一言では合意しない");
+ok(agreementCondition(SCRIPT.second, names, SCRIPT.returns, SCRIPT.landing, [SCRIPT.first]), "台本の2本目は合意の条件を満たす");
 ok(!agreementCondition("塩レモン炭酸を値引きします", names, SCRIPT.returns, SCRIPT.landing), "品名を言っても値引きなら合意しない");
 ok(!agreementCondition("期間限定で値引きします", names, SCRIPT.returns, SCRIPT.landing), "試す語があっても値引きなら合意しない");
 ok(!agreementCondition("塩レモン炭酸は外しません", names, SCRIPT.returns, SCRIPT.landing), "外さないと言えば合意しない");
