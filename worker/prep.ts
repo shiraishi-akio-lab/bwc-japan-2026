@@ -100,14 +100,19 @@ prepRoutes.patch("/preps/:id", async (c) => {
   const p = await loadPrep(c.env.DB, c.req.param("id"));
   if (!p) return c.json({ error: "準備が見つかりません" }, 404);
   const b = await c.req.json<PrepBody>();
-  const returns = b.returns ? b.returns.map(text).filter(Boolean).slice(0, MAX_RETURNS) : returnsOf(p);
+  const gain = b.gainAnswer === undefined ? p.gain_answer : text(b.gainAnswer);
+  const returns = JSON.stringify(b.returns ? b.returns.map(text).filter(Boolean).slice(0, MAX_RETURNS) : returnsOf(p));
+  const landing = b.landing === undefined ? p.landing : text(b.landing);
+  // 相談文の元が変わったら、古い1枚を残さない
+  const stale = gain !== p.gain_answer || returns !== p.returns_json || landing !== p.landing;
   await c.env.DB.prepare(
-    "UPDATE preps SET gain_answer = ?, cause_hypothesis = ?, returns_json = ?, landing = ?, updated_at = datetime('now') WHERE id = ?",
+    "UPDATE preps SET gain_answer = ?, cause_hypothesis = ?, returns_json = ?, landing = ?, consult_json = ?, updated_at = datetime('now') WHERE id = ?",
   ).bind(
-    b.gainAnswer === undefined ? p.gain_answer : text(b.gainAnswer),
+    gain,
     b.causeHypothesis === undefined ? p.cause_hypothesis : text(b.causeHypothesis),
-    JSON.stringify(returns),
-    b.landing === undefined ? p.landing : text(b.landing),
+    returns,
+    landing,
+    stale ? "" : p.consult_json,
     p.id,
   ).run();
   return c.json(await prepView(c.env.DB, (await loadPrep(c.env.DB, p.id))!));
@@ -142,7 +147,11 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
   const shelf = await loadShelf(db, found.account.id);
   const rounds = p.round_turns + 1;
   const atLimit = rounds >= ROUND_LIMIT;
-  const agreed = p.stage === "refused" && agreementCondition(said, shelf.map((i) => i.short_name), returnsOf(p), p.landing);
+  const history = await loadTurns(db, p.session_id);
+  const repLines = history.filter((t) => t.role === "rep").map((t) => t.content);
+  const saidThisRound = p.round_turns > 0 ? repLines.slice(-p.round_turns) : [];
+  const removable = shelf.filter((i) => !i.is_pb).map((i) => i.short_name);
+  const agreed = p.stage === "refused" && agreementCondition(said, removable, returnsOf(p), p.landing, saidThisRound);
 
   let stage: Stage;
   let move: BuyerMove | "question" | "closed";
@@ -160,10 +169,11 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
     const key = c.env.ANTHROPIC_API_KEY;
     if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
     const record = await buildRecord(db, found.buyer, found.account);
-    const turns: Turn[] = [...(await loadTurns(db, p.session_id)), { role: "rep", content: said }];
-    const repSaid = turns.filter((t) => t.role === "rep").map((t) => t.content).join("\n");
-    const avoid = move === "push" ? shelf.map((i) => i.short_name).filter((n) => !repSaid.includes(n)) : [];
-    reply = await buyerStaged(key, turns, buyerPersona(found.buyer, found.account, record), await buyerShelfNotes(db, found.account.id), move, avoid);
+    const turns: Turn[] = [...history, { role: "rep", content: said }];
+    const repSaid = [...repLines, said].join("\n");
+    const notes = await buyerShelfNotes(db, found.account.id);
+    const unsaid = move === "push" ? shelf.map((i) => i.short_name).filter((n) => !repSaid.includes(n)) : [];
+    reply = await buyerStaged(key, turns, buyerPersona(found.buyer, found.account, record), notes.text, move, [...notes.secrets, ...unsaid]);
   }
 
   await db.batch([

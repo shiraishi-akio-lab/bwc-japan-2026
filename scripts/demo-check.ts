@@ -18,12 +18,14 @@ const BUYER = "buyer-saeki";
 const EXPECTED_IDS = ["shelf-shiolemon", "shelf-ginger", "shelf-mulemon", "shelf-yuzu", "shelf-cola-zero"];
 const CARD_ID = "case-10";
 const PRACTICE_MARK = "台本確認だけの言い回し";
+const SHELF_NAMES = ["塩レモン", "ジンジャーエール", "無糖レモン", "ゆず炭酸", "コーラゼロ", "強炭酸", "無糖炭酸水"];
 
 const SCRIPT = {
   gain: "棚全体の回転が上がり、健康の売場で来店が増えること",
   pitch: `${PRACTICE_MARK}で、3月の棚割りに和ハーブ炭酸を入れていただきたいです`,
   returns: ["弊社の塩レモン炭酸を外して、和ハーブ炭酸を入れる", "8店舗で3か月だけ試して、数字で判断してもらう"],
   landing: "今回の改定は見送り、次の改定に向けて確かめることを約束する",
+  stuck: "えっと、今ある品はそのままで、入れていただけないかと",
   first: "弊社の塩レモン炭酸を外して、和ハーブ炭酸を入れてはいかがでしょうか",
   second: "では、8店舗で3か月だけ試して、数字を見て判断していただけませんか",
 };
@@ -57,7 +59,7 @@ const db = proxy.env.DB;
 // バイヤーだけの列が応答に混じらないかの物差し（値は D1 から読む）
 const { results: notes } = await db.prepare("SELECT gross_margin_pct, note FROM shelf_buyer_notes").all<{ gross_margin_pct: number; note: string }>();
 const persona = (await db.prepare("SELECT persona FROM buyers WHERE id = ?").bind(BUYER).first<{ persona: string }>())!.persona;
-const SECRETS = ["gross_margin", "delist_plan", "persona", "第一候補", persona, ...notes.map((n) => n.note), ...notes.map((n) => `粗利${n.gross_margin_pct}%`)];
+const SECRETS = ["gross_margin", "delist_plan", "persona", "第一候補", persona, ...notes.map((n) => n.note), ...notes.map((n) => `${n.gross_margin_pct}%`)];
 const leaks = (raw: string) => SECRETS.filter((s) => raw.includes(s));
 ok(leaks(`{"note":"${notes[0].note}"}`).length > 0, "漏れの物差しが、混じったものを実際に拾える");
 
@@ -71,6 +73,12 @@ ok(agreementCondition("まず数店で試して判断を", names, [], ""), "試�
 ok(agreementCondition(SCRIPT.landing, names, [], SCRIPT.landing), "落としどころを言えば合意の条件を満たす");
 ok(!agreementCondition("では値引きします", names, SCRIPT.returns, SCRIPT.landing), "値引きだけでは合意しない");
 ok(!agreementCondition("えっと、その", names, SCRIPT.returns, SCRIPT.landing), "準備の無い一言では合意しない");
+ok(!agreementCondition("塩レモン炭酸を値引きします", names, SCRIPT.returns, SCRIPT.landing), "品名を言っても値引きなら合意しない");
+ok(!agreementCondition("期間限定で値引きします", names, SCRIPT.returns, SCRIPT.landing), "試す語があっても値引きなら合意しない");
+ok(!agreementCondition("塩レモン炭酸は外しません", names, SCRIPT.returns, SCRIPT.landing), "外さないと言えば合意しない");
+ok(!agreementCondition("試すつもりはありません", names, SCRIPT.returns, SCRIPT.landing), "試さないと言えば合意しない");
+ok(!agreementCondition("無糖炭酸水を外してください", names, SCRIPT.returns, SCRIPT.landing), "PB を名指ししても合意しない");
+ok(!agreementCondition(SCRIPT.first, names, SCRIPT.returns, SCRIPT.landing, [SCRIPT.first]), "断られた案の言い直しでは合意しない");
 const card = (id: string, status: string) => ({ id, status }) as CaseCard;
 ok(approvedCard([card(CARD_ID, "pending")], CARD_ID) === null, "未承認のカードは返さない（画面はカード準備中）");
 ok(approvedCard([], CARD_ID) === null, "カードが無くても落ちない");
@@ -103,13 +111,24 @@ async function practiceRun(n: number): Promise<boolean> {
   // 再読み込み：別のリクエストで同じ内容が返る
   await call("PATCH", `/preps/${id}`, { gainAnswer: SCRIPT.gain });
   const { body: reread } = await call<Prep>("GET", `/preps/${id}`);
-  ok(reread.gainAnswer === SCRIPT.gain && reread.meetingOn === "2026-11-12", "読み直しても準備の内容が残る");
+  await call("PATCH", `/preps/${id}`, { returns: [SCRIPT.returns[0]], landing: "" });
+  const partial = (await call<Prep>("GET", `/preps/${id}`)).body;
+  ok(reread.gainAnswer === SCRIPT.gain && reread.meetingOn === "2026-11-12" && partial.returns.join() === SCRIPT.returns[0] && partial.stage === "opening", "読み直しても準備の内容が残る（書きかけの返しと段階も）");
   ok((await call("GET", `/preps/${id}/judgment`)).status === 409, "問いを受ける前は候補を返さない");
 
   // 固定の問い
   const asked = await call<{ move: string; prep: Prep }>("POST", `/preps/${id}/turn`, { text: SCRIPT.pitch });
   const q = asked.body.prep.turns.at(-1)?.content;
   ok(q === KEY_QUESTION && asked.body.move === "question", "「どれを外すの？」が出る", q);
+
+  if (n <= FULL_RUNS) {
+    // 問いのあとに答えようとしても、バイヤーは答えを教えない
+    const pushed = await call<{ move: string; prep: Prep }>("POST", `/preps/${id}/turn`, { text: SCRIPT.stuck });
+    const line = pushed.body.prep.turns.at(-1)?.content ?? "";
+    ok(pushed.body.move === "push" && pushed.body.prep.stage === "asked", "止まった答えには詰めるだけで受けない", line);
+    ok(!SHELF_NAMES.some((s) => line.includes(s)), "詰める文に棚の品名が出ない");
+    ok(leaks(pushed.raw).length === 0, "詰める文にバイヤーだけの列が無い", leaks(pushed.raw).join("／"));
+  }
 
   // 候補とカード
   const j = await call<{ candidates: { id: string }[]; card: { id: string; proposal: string } | null }>("GET", `/preps/${id}/judgment`);
@@ -133,6 +152,7 @@ async function practiceRun(n: number): Promise<boolean> {
     let last = first;
     for (let i = 0; i < 5 && last.body.prep.stage === "refused"; i++) {
       last = await call("POST", `/preps/${id}/turn`, { text: "えっと、その、よろしくお願いします" });
+      ok(leaks(last.raw).length === 0, "聞き返す文にバイヤーだけの列が無い", leaks(last.raw).join("／"));
     }
     ok(last.body.prep.stage === "ended" && last.body.move === "closed", "上限の前に固定文で閉じる", last.body.prep.turns.at(-1)?.content);
     ok((await call<Prep>("POST", `/preps/${id}/retry`)).status === 200, "閉じたあとも答え直せる");
@@ -142,6 +162,7 @@ async function practiceRun(n: number): Promise<boolean> {
 
   const second = await call<{ move: string; prep: Prep }>("POST", `/preps/${id}/turn`, { text: SCRIPT.second });
   ok(second.body.move === "agree" && second.body.prep.stage === "agreed", "2本目で合意する", second.body.prep.turns.at(-1)?.content);
+  ok(leaks(second.raw).length === 0, "合意の文にバイヤーだけの列が無い", leaks(second.raw).join("／"));
 
   if (n <= FULL_RUNS) {
     // 前回の続き
@@ -170,6 +191,10 @@ async function practiceRun(n: number): Promise<boolean> {
     ok(axes.every((a) => !sheet.includes(a)), "相談文に5軸が入らない");
     ok(!next || !sheet.includes(next), "相談文に次の一行動が入らない");
     ok(leaks(sheet).length === 0, "相談文にバイヤーだけの列が無い", leaks(sheet).join("／"));
+    await call("PATCH", `/preps/${id}`, { landing: SCRIPT.landing });
+    ok(!!(await call<Prep>("GET", `/preps/${id}`)).body.consult, "返しを変えなければ相談文は残る");
+    await call("PATCH", `/preps/${id}`, { landing: `${SCRIPT.landing}。` });
+    ok((await call<Prep>("GET", `/preps/${id}`)).body.consult === null, "返しを変えたら古い相談文は消える");
     console.log(`    確かめたいこと：${c?.asks.join(" ／ ")}`);
   }
   return failed === before;
@@ -178,6 +203,18 @@ async function practiceRun(n: number): Promise<boolean> {
 // 準備の無い相談文は Claude を呼ばずに止まる
 const { body: empty } = await call<Prep>("POST", "/preps", { buyerId: BUYER, meetingOn: "2026-11-12" });
 ok((await call("POST", `/preps/${empty.id}/consult`)).status === 400, "返しが無ければ相談文を作らない");
+
+// 問いのあとで止まり続けても詰まらない
+console.log("\n■ 問いのあとに話し続ける");
+const { body: stuck } = await call<Prep>("POST", "/preps", { buyerId: BUYER, meetingOn: "2026-11-12" });
+await call("PATCH", `/preps/${stuck.id}`, { gainAnswer: SCRIPT.gain, returns: SCRIPT.returns, landing: SCRIPT.landing });
+let lastStuck = await call<{ move: string; prep: Prep }>("POST", `/preps/${stuck.id}/turn`, { text: SCRIPT.pitch });
+for (let i = 0; i < 5 && lastStuck.body.prep.stage === "asked"; i++) {
+  lastStuck = await call("POST", `/preps/${stuck.id}/turn`, { text: SCRIPT.stuck });
+}
+ok(lastStuck.body.prep.stage === "ended" && lastStuck.body.move === "closed", "問いの段階でも上限の前に固定文で閉じる", lastStuck.body.prep.turns.at(-1)?.content);
+ok((await call("GET", `/preps/${stuck.id}/judgment`)).status === 200, "閉じたあともベテランの判断は開ける");
+ok((await call("POST", `/preps/${stuck.id}/retry`)).status === 200, "閉じたあとも答え直せる");
 
 const passed: boolean[] = [];
 for (let n = 1; n <= RUNS; n++) passed.push(await practiceRun(n));

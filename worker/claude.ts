@@ -85,7 +85,7 @@ const MOVE_FALLBACK: Record<BuyerMove, string> = {
 
 const StagedSchema = z.object({ reply: z.string(), accepted: z.boolean() });
 
-// avoid：若手がまだ口にしていない棚の品名。問いの段階でバイヤーが答えを先に言わないようにする
+// avoid：発言に入っていたら採らない語（バイヤーだけの値と、問いの段階でまだ若手が口にしていない品名）
 export async function buyerStaged(apiKey: string, turns: Turn[], persona: string, shelfNotes: string, move: BuyerMove, avoid: string[] = []): Promise<string> {
   const history = turns[0]?.role === "buyer" ? turns.slice(1) : turns;
   const stage = `## 棚の事情（あなただけが知っていること）\n${shelfNotes}\n\n粗利の数字や改廃の予定は、そのまま口に出さない。\n\n## 今の段階\n${MOVE_INSTRUCTION[move]}\n\nreply には発言の中身だけを書く。`;

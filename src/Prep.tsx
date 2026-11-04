@@ -219,7 +219,7 @@ function Judgment({ prep, onChange, onError }: Step) {
     () => call<{ candidates: Candidate[]; card: Card | null }>(`/api/preps/${prep.id}/judgment`).then(setData).catch((e: Error) => onError(e.message)),
     [prep.id, onError],
   );
-  const preparing = prep.stage !== "asked";
+  const preparing = prep.stage !== "asked" || prep.returns.length > 0 || prep.landing !== "";
   useEffect(() => { if (preparing) void show(); }, [preparing, show]);
 
   if (!data) return <p><button onClick={show}>ベテランの判断を見る</button></p>;
@@ -268,6 +268,8 @@ function Returns({ prep, onChange, onError }: Step) {
   const [returns, setReturns] = useState([0, 1, 2].map((i) => prep.returns[i] ?? ""));
   const [landing, setLanding] = useState(prep.landing);
   const ready = returns.filter((r) => r.trim()).length >= 2 && landing.trim() !== "";
+  // 欄を離れたら書いた分を残す（揃っていなくても消えない）
+  const save = () => call<Prep>(`/api/preps/${prep.id}`, "PATCH", { returns, landing }).then(onChange).catch((e: Error) => onError(e.message));
   const retry = async () => {
     try {
       await call(`/api/preps/${prep.id}`, "PATCH", { returns, landing });
@@ -284,12 +286,12 @@ function Returns({ prep, onChange, onError }: Step) {
       {returns.map((r, i) => (
         <label key={i} style={{ display: "block", marginBottom: 8 }}>
           返し{i + 1}{i === 2 && <small style={{ color: "#777" }}>（任意）</small>}
-          <textarea value={r} onChange={(e) => setReturns(returns.map((x, j) => (j === i ? e.target.value : x)))} rows={2} style={{ width: "100%" }} />
+          <textarea value={r} onChange={(e) => setReturns(returns.map((x, j) => (j === i ? e.target.value : x)))} onBlur={save} rows={2} style={{ width: "100%" }} />
         </label>
       ))}
       <label style={{ display: "block", marginBottom: 8 }}>
         落としどころ
-        <textarea value={landing} onChange={(e) => setLanding(e.target.value)} rows={2} style={{ width: "100%" }} />
+        <textarea value={landing} onChange={(e) => setLanding(e.target.value)} onBlur={save} rows={2} style={{ width: "100%" }} />
       </label>
       <button onClick={retry} disabled={!ready}>同じ商談の続きで答え直す</button>
     </>
