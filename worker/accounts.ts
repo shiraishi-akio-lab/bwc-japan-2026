@@ -25,20 +25,34 @@ export const loadBuyer = async (db: D1Database, buyerId: string) => {
   return account ? { buyer, account } : null;
 };
 
+export type InitiativeResult = { initiative: string; result: string; outcome: "good" | "bad"; held_on: string };
+
+// 施策の結果。確定した商談の分だけを読む
+export const confirmedResults = async (db: D1Database, buyerId: string): Promise<InitiativeResult[]> => {
+  const { results } = await db.prepare(
+    `SELECT r.initiative, r.result, r.outcome, m.held_on FROM initiative_results r
+     JOIN meetings m ON m.id = r.meeting_id
+     WHERE m.buyer_id = ? AND m.status = 'confirmed' ORDER BY m.held_on DESC`,
+  ).bind(buyerId).all<InitiativeResult>();
+  return results;
+};
+
 // AI に渡す取引先の記録。読むのは人が確定したものだけ
 export async function buildRecord(db: D1Database, buyer: Buyer, account: Account): Promise<string> {
-  const [pri, mtg, prm] = await Promise.all([
+  const [pri, mtg, prm, res] = await Promise.all([
     db.prepare("SELECT text, basis, noted_on FROM priorities WHERE buyer_id = ? AND status = 'approved' ORDER BY noted_on DESC LIMIT 3")
       .bind(buyer.id).all<{ text: string; basis: string; noted_on: string }>(),
     db.prepare("SELECT held_on, kind, summary FROM meetings WHERE account_id = ? AND status = 'confirmed' ORDER BY held_on DESC LIMIT 3")
       .bind(account.id).all<{ held_on: string; kind: string; summary: string }>(),
     db.prepare("SELECT p.text, p.due FROM promises p JOIN meetings m ON m.id = p.meeting_id WHERE m.buyer_id = ? AND m.status = 'confirmed' AND p.done = 0")
       .bind(buyer.id).all<{ text: string; due: string }>(),
+    confirmedResults(db, buyer.id),
   ]);
   const lines = [`取引先：${account.name}（${account.format}・${account.stores}店舗）`, `決まりごと：${account.rules}`, `相手：${buyer.name} ${buyer.role}`];
   if (pri.results.length) lines.push("今大事にしていること：", ...pri.results.map((p) => `- ${p.text}（${p.noted_on}・${p.basis}）`));
   if (mtg.results.length) lines.push("最近の商談：", ...mtg.results.map((m) => `- ${m.held_on} ${m.kind}：${m.summary}`));
   if (prm.results.length) lines.push("次回の約束：", ...prm.results.map((p) => `- ${p.text}${p.due ? `（${p.due}まで）` : ""}`));
+  if (res.length) lines.push("やった施策の結果：", ...res.map((r) => `- ${r.held_on} ${r.initiative}：${r.result}`));
   return lines.join("\n");
 }
 

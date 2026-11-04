@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { buildRecord, buyerPersona, loadBuyer } from "./accounts";
+import { buildRecord, buyerPersona, confirmedResults, loadBuyer } from "./accounts";
 import { approvedCard, cardBody, DEMO_CARD_ID } from "./card";
-import { buyerOpening, buyerStaged, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, type BuyerMove, type Turn } from "./claude";
+import { buyerOpening, buyerStaged, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, writeConsult, type BuyerMove, type Turn } from "./claude";
 import { cases } from "./data";
 import { agreementCondition, buyerShelfNotes, loadShelf, shelfCandidates, type ShelfItem } from "./shelf";
 
@@ -188,4 +188,39 @@ prepRoutes.post("/preps/:id/retry", async (c) => {
     ]);
   }
   return c.json(await prepView(db, (await loadPrep(db, p.id))!));
+});
+
+// 上司への相談文。返しと落としどころはそのまま写し、Claude は要約と確かめたいことだけを書く
+prepRoutes.post("/preps/:id/consult", async (c) => {
+  const db = c.env.DB;
+  const p = await loadPrep(db, c.req.param("id"));
+  if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  if (!preparedEnough(p)) return c.json({ error: `返しを${MIN_RETURNS}本以上と、落としどころを書いてください` }, 400);
+  const key = c.env.ANTHROPIC_API_KEY;
+  if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
+  const found = (await loadBuyer(db, p.buyer_id))!;
+  const candidates = shelfCandidates(await loadShelf(db, found.account.id)).map(({ name, maker, is_own, facings, weekly_units, yoy_pct }) => ({
+    name, maker, is_own, facings, weekly_units, yoy_pct,
+  }));
+  const returns = returnsOf(p);
+  const draft = await writeConsult(key, { gainAnswer: p.gain_answer, returns, landing: p.landing, candidates });
+  const consult = { gainAnswer: p.gain_answer, returns, landing: p.landing, ...draft };
+  await db.prepare("UPDATE preps SET consult_json = ?, updated_at = datetime('now') WHERE id = ?").bind(JSON.stringify(consult), p.id).run();
+  return c.json(await prepView(db, (await loadPrep(db, p.id))!));
+});
+
+// 前回の続き：確定した商談の約束と施策の結果だけを出す。結果が悪ければ原因の仮説を問う
+prepRoutes.get("/preps/:id/recap", async (c) => {
+  const db = c.env.DB;
+  const p = await loadPrep(db, c.req.param("id"));
+  if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  const [meeting, promises, results] = await Promise.all([
+    db.prepare("SELECT held_on, kind, summary FROM meetings WHERE buyer_id = ? AND status = 'confirmed' ORDER BY held_on DESC LIMIT 1")
+      .bind(p.buyer_id).first<{ held_on: string; kind: string; summary: string }>(),
+    db.prepare(
+      "SELECT r.text, r.due FROM promises r JOIN meetings m ON m.id = r.meeting_id WHERE m.buyer_id = ? AND m.status = 'confirmed' AND r.done = 0 ORDER BY m.held_on DESC",
+    ).bind(p.buyer_id).all<{ text: string; due: string }>(),
+    confirmedResults(db, p.buyer_id),
+  ]);
+  return c.json({ meeting, promises: promises.results, results, askCause: results.some((r) => r.outcome === "bad") });
 });
