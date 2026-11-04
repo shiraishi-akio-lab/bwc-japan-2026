@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { loadBuyer } from "./accounts";
 import { buyerOpening, type Turn } from "./claude";
+import { loadShelf, shelfCandidates, type ShelfItem } from "./shelf";
 
 type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
 
@@ -47,10 +48,11 @@ const prepView = async (db: D1Database, p: PrepRow) => {
 
 export const prepRoutes = new Hono<{ Bindings: Bindings }>();
 
-// 入口で選べる相手
+// 入口で選べる相手。棚データのある取引先だけ
 prepRoutes.get("/preps/buyers", async (c) => {
   const { results } = await c.env.DB.prepare(
-    "SELECT b.id, b.name, b.role, a.name AS account_name FROM buyers b JOIN accounts a ON a.id = b.account_id WHERE b.status = '現役' ORDER BY a.name",
+    `SELECT b.id, b.name, b.role, a.name AS account_name FROM buyers b JOIN accounts a ON a.id = b.account_id
+     WHERE b.status = '現役' AND EXISTS (SELECT 1 FROM shelf_items s WHERE s.account_id = a.id) ORDER BY a.name`,
   ).all();
   return c.json(results);
 });
@@ -105,4 +107,15 @@ prepRoutes.patch("/preps/:id", async (c) => {
     p.id,
   ).run();
   return c.json(await prepView(c.env.DB, (await loadPrep(c.env.DB, p.id))!));
+});
+
+// ベテランの判断。問いが先：得の答えが空なら、候補もカードも返さない
+prepRoutes.get("/preps/:id/judgment", async (c) => {
+  const p = await loadPrep(c.env.DB, c.req.param("id"));
+  if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  if (!p.gain_answer.trim()) return c.json({ error: "先に、相手の得は何かを書いてください" }, 409);
+  if (p.stage === "opening") return c.json({ error: "先に、バイヤーの問いを受けてください" }, 409);
+  const found = await loadBuyer(c.env.DB, p.buyer_id);
+  const shelf = await loadShelf(c.env.DB, found!.account.id);
+  return c.json({ candidates: shelfCandidates(shelf) satisfies ShelfItem[] });
 });

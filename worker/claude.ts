@@ -20,7 +20,7 @@ export const buyerOpening = (name: string) => `${name.replace(/（架空）$/, "
 const BUYER_SYSTEM = `あなたは商談練習用の「バイヤー役」です。架空の小売チェーンのバイヤーとして、メーカーの若手営業と話します。
 
 ## メーカー側の舞台（すべて架空）
-${JSON.stringify({ maker: world.maker, rep: world.people.rep }, null, 2)}
+${JSON.stringify({ scene: world.scene, maker: world.maker, rep: world.people.rep }, null, 2)}
 
 ## 話し方
 - 日本語。1回の発言は1〜3文。忙しいバイヤーとして自然に話す。発言の中身だけを書く（名前やかぎ括弧を付けない）。
