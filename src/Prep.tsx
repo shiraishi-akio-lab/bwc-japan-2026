@@ -9,7 +9,15 @@ type Card = {
   id: string; title: string; situation: string; hypothesis: string; evidence: string; proposal: string; constraints: string;
   result: string; nextJudgment: string; rejectedOptions: { option: string; reason: string }[]; author: string;
 };
+type Recap = {
+  meeting: { held_on: string; kind: string; summary: string } | null;
+  promises: { text: string; due: string }[];
+  results: { initiative: string; result: string; outcome: string; held_on: string }[];
+  askCause: boolean;
+};
+type Consult = { gainAnswer: string; returns: string[]; landing: string; summary: string; concessions: string[]; asks: string[] };
 type Prep = {
+  consult: Consult | null;
   id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; meetingOn: string;
   gainAnswer: string; causeHypothesis: string; returns: string[]; landing: string; stage: string; turns: Turn[];
 };
@@ -41,9 +49,11 @@ export function PrepRoom() {
             <strong>{prep.accountName}　{prep.buyerName}</strong>　次の商談 {prep.meetingOn}
           </p>
           <button style={link} onClick={() => { window.location.hash = ""; setPrep(null); }}>← 別の準備を開く</button>
+          <Recap prep={prep} onChange={setPrep} onError={setError} />
           <Gain prep={prep} onChange={setPrep} onError={setError} />
           {prep.gainAnswer && <Practice prep={prep} onChange={setPrep} onError={setError} />}
           {prep.gainAnswer && prep.stage !== "opening" && <Judgment key={prep.id} prep={prep} onChange={setPrep} onError={setError} />}
+          {prep.returns.length >= 2 && prep.landing && <ConsultSheet prep={prep} onChange={setPrep} onError={setError} />}
         </>
       )}
     </section>
@@ -90,6 +100,41 @@ function Entrance({ onOpen, onError }: { onOpen: (p: Prep) => void; onError: (m:
 }
 
 type Step = { prep: Prep; onChange: (p: Prep) => void; onError: (m: string | null) => void };
+
+// 前回の続き：人が確定した記録だけを読む
+function Recap({ prep, onChange, onError }: Step) {
+  const [data, setData] = useState<Recap | null>(null);
+  const [cause, setCause] = useState(prep.causeHypothesis);
+  useEffect(() => {
+    call<Recap>(`/api/preps/${prep.id}/recap`).then(setData).catch((e: Error) => onError(e.message));
+  }, [prep.id, onError]);
+  if (!data) return null;
+  const save = () => call<Prep>(`/api/preps/${prep.id}`, "PATCH", { causeHypothesis: cause }).then(onChange).catch((e: Error) => onError(e.message));
+  return (
+    <>
+      <h2>前回の続き</h2>
+      {data.meeting ? <p>{data.meeting.held_on} {data.meeting.kind}：{data.meeting.summary}</p> : <p style={{ color: "#777" }}>確定した記録はまだありません。</p>}
+      {data.promises.length > 0 && <h3>前回の約束</h3>}
+      {data.promises.map((p, i) => <p key={i} style={{ margin: "4px 0" }}>{p.text}{p.due && `（${p.due}まで）`}</p>)}
+      {data.results.length > 0 && <h3>やった施策の結果</h3>}
+      {data.results.map((r, i) => (
+        <div key={i} style={{ ...box, borderColor: r.outcome === "bad" ? "#d93025" : "#ddd" }}>
+          <strong>{r.initiative}</strong>
+          <div>{r.result}</div>
+        </div>
+      ))}
+      {data.askCause && (
+        <>
+          <label style={{ display: "block", marginBottom: 8 }}>
+            結果が良くありません。原因の仮説は？
+            <textarea value={cause} onChange={(e) => setCause(e.target.value)} rows={2} style={{ width: "100%" }} />
+          </label>
+          <button onClick={save} disabled={!cause.trim() || cause.trim() === prep.causeHypothesis}>書き留める</button>
+        </>
+      )}
+    </>
+  );
+}
 
 // 得意先の得：Claude は使わない固定の問い
 function Gain({ prep, onChange, onError }: Step) {
@@ -242,6 +287,45 @@ function Returns({ prep, onChange, onError }: Step) {
         <textarea value={landing} onChange={(e) => setLanding(e.target.value)} rows={2} style={{ width: "100%" }} />
       </label>
       <button onClick={retry} disabled={!ready}>同じ商談の続きで答え直す</button>
+    </>
+  );
+}
+
+// 上司への相談文。上司が返事する画面は作らない。若手が持っていく1枚
+function ConsultSheet({ prep, onChange, onError }: Step) {
+  const [busy, setBusy] = useState(false);
+  const make = async () => {
+    setBusy(true);
+    onError(null);
+    try {
+      onChange(await call<Prep>(`/api/preps/${prep.id}/consult`, "POST"));
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const c = prep.consult;
+  return (
+    <>
+      <h2>上司への相談文</h2>
+      <p style={{ color: "#555" }}>考えは一人、決めは上司。ここまで譲ってよいかを、商談の前に確かめます。</p>
+      <button onClick={make} disabled={busy}>{c ? "書き直す" : "相談文を作る"}</button>
+      {busy && <span style={{ marginLeft: 8 }}>書いています…</span>}
+      {c && (
+        <div style={box}>
+          <p style={{ margin: "0 0 8px" }}><strong>{prep.accountName} {prep.buyerName}との商談（{prep.meetingOn}）の前の相談</strong></p>
+          <p>{c.summary}</p>
+          <p style={{ margin: "8px 0 0" }}><small style={{ color: "#555" }}>相手の得</small><br />{c.gainAnswer}</p>
+          <p style={{ margin: "8px 0 0" }}><small style={{ color: "#555" }}>用意した返し</small></p>
+          <ol style={{ margin: "4px 0", paddingLeft: 20 }}>
+            {c.returns.map((r, i) => <li key={i}>{r}<br /><small style={{ color: "#555" }}>譲るもの：{c.concessions[i]}</small></li>)}
+          </ol>
+          <p style={{ margin: "8px 0 0" }}><small style={{ color: "#555" }}>落としどころ</small><br />{c.landing}</p>
+          <p style={{ margin: "8px 0 0" }}><small style={{ color: "#555" }}>確かめたいこと</small></p>
+          <ul style={{ margin: "4px 0", paddingLeft: 20 }}>{c.asks.map((a, i) => <li key={i}>{a}</li>)}</ul>
+        </div>
+      )}
     </>
   );
 }

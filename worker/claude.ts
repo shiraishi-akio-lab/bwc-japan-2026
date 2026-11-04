@@ -380,6 +380,57 @@ export async function draftMinutes(apiKey: string, turns: Turn[]): Promise<Minut
   return { ...out, priorities: out.priorities.filter((p) => p.basis.trim() !== "" && said.includes(p.basis.trim())) };
 }
 
+// 相談文を書く係：返しと落としどころを、商談前に上司へ確かめる1枚にする。決めるのは上司。
+// 入力は4つだけ。練習の発言・5軸・次の一行動は渡さない
+const ConsultSchema = z.object({
+  summary: z.string(),
+  concessions: z.array(z.string()),
+  asks: z.array(z.string()),
+});
+
+export type ConsultInput = {
+  gainAnswer: string;
+  returns: string[];
+  landing: string;
+  candidates: { name: string; maker: string; is_own: number; facings: number; weekly_units: number; yoy_pct: number }[];
+};
+export type ConsultDraft = z.infer<typeof ConsultSchema>;
+
+const CONSULT_SYSTEM = `あなたは若手営業が上司に渡す相談文を下書きする係です。商談の前に「ここまで譲ってよいか」を上司に確かめるための文です。
+
+## 書き方の決まり
+- 入力に書かれていることだけを使う。入力に無い数字・品名・条件を足さない。
+- summary：何を相談したいかを2文以内で。
+- concessions：入力の返しと同じ順番で、1本につき1文、その返しで自社が譲るものを書く。譲るものが読み取れなければ「確かめが要る」と書く。
+- asks：上司に確かめたいことを2〜3個、「〜してよいでしょうか」の形で書く。自社品を外す案があれば、必ず1つ入れる。
+- 決めるのは上司。勧める・決めつける言い方をしない。
+- 人を評価する言葉を使わない。日本語。`;
+
+// 入力に無い数字を含む文は採らない（数字は Claude に作らせない）
+const numbersIn = (s: string) => s.match(/\d+/g) ?? [];
+const knownNumbersOnly = (s: string, known: Set<string>) =>
+  s.split(/(?<=。)/).filter((sentence) => numbersIn(sentence).every((n) => known.has(n))).join("");
+
+export async function writeConsult(apiKey: string, input: ConsultInput): Promise<ConsultDraft> {
+  const body = JSON.stringify(input, null, 2);
+  const res = await client(apiKey).beta.messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    ...FALLBACK,
+    output_config: { effort: "low", format: zodOutputFormat(ConsultSchema) },
+    system: [{ type: "text", text: CONSULT_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: `## 入力\n${body}` }],
+  });
+  const out = res.parsed_output;
+  if (res.stop_reason === "refusal" || !out) throw new Error("相談文を書く係の応答が得られませんでした");
+  const known = new Set(numbersIn(body));
+  return {
+    summary: knownNumbersOnly(out.summary, known),
+    concessions: input.returns.map((_, i) => knownNumbersOnly(out.concessions[i] ?? "", known) || "確かめが要る"),
+    asks: out.asks.map((a) => knownNumbersOnly(a, known)).filter(Boolean),
+  };
+}
+
 // 出典の決まりはコードで守らせる：引用が記録に無い・カード id が存在しない、は落とす
 export function enforceSources(result: CheckResult, turns: Turn[], cards: CaseCard[]): CheckResult {
   const repText = turns.filter((t) => t.role === "rep").map((t) => t.content).join("\n");
