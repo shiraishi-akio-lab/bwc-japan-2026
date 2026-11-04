@@ -43,6 +43,7 @@ export function App() {
   const [buyerName, setBuyerName] = useState("バイヤー役");
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [fromPrep, setFromPrep] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +72,7 @@ export function App() {
       setBuyerName(s.buyerName);
       setMeetingId(null);
       setIsRecording(false);
+      setFromPrep(false);
       setResult(null);
       setNext(null);
     });
@@ -81,6 +83,20 @@ export function App() {
     setSessionId(id);
     setTurns(t);
     setIsRecording(true);
+    setFromPrep(false);
+    setResult(null);
+    setNext(null);
+    setMode("practice");
+  };
+
+  // 準備室の練習を、今までと同じ3分メモ・確かめる・次の一行動で振り返る
+  const fromPrepRoom = (id: string, t: Turn[], name: string) => {
+    setMeetingId(null);
+    setSessionId(id);
+    setTurns(t);
+    setBuyerName(name);
+    setIsRecording(false);
+    setFromPrep(true);
     setResult(null);
     setNext(null);
     setMode("practice");
@@ -115,7 +131,7 @@ export function App() {
         <button onClick={() => { setView({ name: "list" }); setMode("accounts"); }} disabled={mode === "accounts"}>取引先の記録</button>
       </nav>
 
-      {mode === "prep" && <PrepRoom />}
+      {mode === "prep" && <PrepRoom onReview={fromPrepRoom} />}
       {mode === "organize" && <Organize axisName={axisName} />}
       {mode === "recording" && <Recording buyers={buyers} onReady={fromRecording} />}
       {mode === "accounts" && (
@@ -144,7 +160,7 @@ export function App() {
 
       {sessionId && (
         <section>
-          <h2>{isRecording ? "1. 本番の商談（文字起こし）" : "1. 練習"}</h2>
+          <h2>{isRecording ? "1. 本番の商談（文字起こし）" : fromPrep ? "1. 準備室の練習" : "1. 練習"}</h2>
           {meetingId && (
             <p style={{ fontSize: 14 }}>
               議事録の下書きを作りました。
@@ -161,7 +177,7 @@ export function App() {
               </li>
             ))}
           </ol>
-          {!isRecording && <>
+          {!isRecording && !fromPrep && <>
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} style={{ width: "100%" }} placeholder="あなたの発言" />
           <button onClick={send} disabled={busy || !draft.trim()}>話す</button>
           </>}

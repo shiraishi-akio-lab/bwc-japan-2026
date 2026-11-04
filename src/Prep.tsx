@@ -25,7 +25,7 @@ type Prep = {
 const prepIdFromHash = () => window.location.hash.match(/^#prep=(.+)$/)?.[1] ?? null;
 
 // 商談前の準備室。再読み込みしても続きから開けるよう、準備の id を URL に持つ
-export function PrepRoom() {
+export function PrepRoom({ onReview }: { onReview: (sessionId: string, turns: Turn[], buyerName: string) => void }) {
   const [prep, setPrep] = useState<Prep | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +54,11 @@ export function PrepRoom() {
           {prep.gainAnswer && <Practice prep={prep} onChange={setPrep} onError={setError} />}
           {prep.gainAnswer && prep.stage !== "opening" && <Judgment key={prep.id} prep={prep} onChange={setPrep} onError={setError} />}
           {prep.returns.length >= 2 && prep.landing && <ConsultSheet prep={prep} onChange={setPrep} onError={setError} />}
+          {prep.turns.some((t) => t.role === "rep") && (
+            <p style={{ marginTop: 24 }}>
+              <button style={link} onClick={() => onReview(prep.sessionId, prep.turns, prep.buyerName)}>この練習を3分メモで振り返る</button>
+            </p>
+          )}
         </>
       )}
     </section>
