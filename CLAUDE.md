@@ -46,6 +46,8 @@ Built with Claude: Japan 2026（2026-11-02〜11-08）の提出作品。このリ
 - 企業の関心：`worker/site.ts` がトップからニュース・決算・取り組みをたどる。見本は `env.ASSETS`、実在の URL は検査つきの fetch で、後の経路は同じ。接続先の検査（`assertPublicUrl`・解決先のアドレス・転送の1段ごと）、ページ数・大きさ・時間の上限、robots.txt を守る。読んだ本文はデータとして渡す。`company_interests` は承認済みだけを読む。
 - 担当者の傾向：`buyer_observations`。確定した商談の分だけを読む。観察された場面を書き、人を評価しない。`buyers.persona`・`shelf_buyer_notes` は混ぜない。
 - ことカレンダー：`season_events`。提案の締切が商談日より先の行事を、コードが近い順に2件選ぶ（`selectEvents`）。
+- POS：`pos_weekly`・`pos_sources`（`worker/pos.ts`）。読むのは売場全体と自社品だけで、他社品は行があっても読まない（他社品を含む棚の表はベテランの判断だけ）。平均と前年比はコードで計算し、見本は棚の表と一致させる。画面にだけ返し、Claude には渡さない。
+- 相手の情報：`/preps/:id/partner`（`prepPartner`）。関心・傾向・POS・行事・前回の約束・確定した商談を1枚に。帯のボタンから重ねて開き、段階の画面は残す（書きかけが消えない）。残った論点は読まない（外す品の答えが問いより先に見えるため）。
 - 渡す先：バイヤー役には関心と行事だけ（`buyerBriefText`）。確かめる係・次を決める係には全部（`coachBriefText`）。相談文を書く係には渡さない。
 
 ## ログインと権限

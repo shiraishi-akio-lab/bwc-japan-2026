@@ -3,12 +3,16 @@
 // public＝ログイン不要／any＝ログイン済みなら誰でも／役割の配列＝その役割だけ
 export type Role = "rep" | "manager";
 export type Allow = "public" | "any" | readonly Role[];
-export type Rule = { method: string; path: string; allow: Allow };
+export type Limit = "claude" | "handoff";
+export type Rule = { method: string; path: string; allow: Allow; limit?: Limit };
+
+// Claude を呼ぶ入口の、1人1日の上限。費用の上限を人ごとに決める（引き継ぎ書は1回最大 $2）
+export const DAY_LIMITS: Record<Limit, number> = { claude: 150, handoff: 3 };
 
 const REP: readonly Role[] = ["rep"];
 const MANAGER: readonly Role[] = ["manager"];
 
-const rule = (method: string, path: string, allow: Allow): Rule => ({ method, path: `/api${path}`, allow });
+const rule = (method: string, path: string, allow: Allow, limit?: Limit): Rule => ({ method, path: `/api${path}`, allow, limit });
 
 export const RULES: Rule[] = [
   rule("GET", "/health", "public"),
@@ -29,13 +33,13 @@ export const RULES: Rule[] = [
   rule("POST", "/priorities/:id", MANAGER),
   rule("POST", "/promises/:id", "any"),
   rule("GET", "/accounts/:id/handoffs", "any"),
-  rule("POST", "/accounts/:id/handoffs", "any"),
+  rule("POST", "/accounts/:id/handoffs", "any", "handoff"),
   rule("GET", "/handoffs/:id", "any"),
 
   // 相手の棚。候補は上司だけが見る（若手には承認済みだけを返す）
   rule("GET", "/accounts/:id/interests", "any"),
-  rule("POST", "/accounts/:id/read-site", MANAGER),
-  rule("POST", "/interests/:id", MANAGER),
+  rule("POST", "/accounts/:id/read-site", "any", "claude"),
+  rule("POST", "/interests/:id", "any"),
   rule("GET", "/buyers/:id/observations", "any"),
   rule("GET", "/season-events", "any"),
 
@@ -46,21 +50,24 @@ export const RULES: Rule[] = [
   rule("GET", "/preps/:id", REP),
   rule("PATCH", "/preps/:id", REP),
   rule("GET", "/preps/:id/judgment", REP),
-  rule("POST", "/preps/:id/turn", REP),
+  rule("POST", "/preps/:id/turn", REP, "claude"),
   rule("POST", "/preps/:id/retry", REP),
-  rule("POST", "/preps/:id/consult", REP),
+  rule("POST", "/preps/:id/consult", REP, "claude"),
   rule("POST", "/preps/:id/consult/send", REP),
   rule("GET", "/preps/:id/brief", REP),
+  rule("GET", "/preps/:id/partner", REP),
   rule("GET", "/preps/:id/recap", REP),
   rule("POST", "/practice", REP),
-  rule("POST", "/practice/:id/turn", REP),
-  rule("POST", "/practice/:id/check", REP),
-  rule("POST", "/recordings", REP),
+  rule("POST", "/practice/:id/turn", REP, "claude"),
+  rule("POST", "/practice/:id/check", REP, "claude"),
+  rule("POST", "/recordings", REP, "claude"),
 
   // 上司の画面
   rule("GET", "/consults", MANAGER),
+  rule("POST", "/consults/:id/reply", MANAGER),
   rule("GET", "/drafts", MANAGER),
-  rule("POST", "/drafts", MANAGER),
+  rule("GET", "/drafts/meetings", MANAGER),
+  rule("POST", "/drafts", MANAGER, "claude"),
   rule("POST", "/drafts/:id", MANAGER),
 ];
 

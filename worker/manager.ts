@@ -28,25 +28,68 @@ export const managerRoutes = new Hono<AppEnv>();
 managerRoutes.get("/consults", async (c) => {
   const me = c.get("user");
   const { results } = await c.env.DB.prepare(
-    `SELECT p.id, p.meeting_on, p.submitted_at, p.consult_json, u.display_name AS rep_name, b.name AS buyer_name, a.name AS account_name
+    `SELECT p.id, p.meeting_on, p.submitted_at, p.consult_json, p.reply_json, u.display_name AS rep_name, b.name AS buyer_name, a.name AS account_name
      FROM preps p JOIN users u ON u.id = p.user_id JOIN buyers b ON b.id = p.buyer_id JOIN accounts a ON a.id = b.account_id
      WHERE u.manager_id = ? AND u.company_id = ? AND a.company_id = ? AND p.submitted_at != '' AND p.consult_json != ''
      ORDER BY p.submitted_at DESC`,
   ).bind(me.id, me.company_id, me.company_id)
-    .all<{ id: string; meeting_on: string; submitted_at: string; consult_json: string; rep_name: string; buyer_name: string; account_name: string }>();
-  return c.json(results.map(({ consult_json, ...r }) => {
-    const { summary, gainAnswer, returns, concessions, landing, asks } = JSON.parse(consult_json) as Record<string, unknown>;
-    return { id: r.id, repName: r.rep_name, buyerName: r.buyer_name, accountName: r.account_name, meetingOn: r.meeting_on, submittedAt: r.submitted_at, summary, gainAnswer, returns, concessions, landing, asks };
+    .all<{ id: string; meeting_on: string; submitted_at: string; consult_json: string; reply_json: string; rep_name: string; buyer_name: string; account_name: string }>();
+  return c.json(results.map(({ consult_json, reply_json, ...r }) => {
+    const reply = reply_json ? (JSON.parse(reply_json) as { stale?: boolean }) : null;
+    const { goal, occasion, summary, gainAnswer, returns, concessions, landing, asks } = JSON.parse(consult_json) as Record<string, unknown>;
+    return { id: r.id, repName: r.rep_name, buyerName: r.buyer_name, accountName: r.account_name, meetingOn: r.meeting_on, submittedAt: r.submitted_at, reply: reply?.stale ? null : reply, goal, occasion, summary, gainAnswer, returns, concessions, landing, asks };
   }));
 });
 
-// 取り込み：過去の商談内容・資料の文字 → カードの候補（pending）。ファイルは受け取らない
+// 相談文への返事。自分の部下が出した1枚にだけ返せる。AI は使わない
+const VERDICTS = ["go", "condition", "rethink"];
+const MAX_REPLY = 300;
+managerRoutes.post("/consults/:id/reply", async (c) => {
+  const me = c.get("user");
+  const found = await c.env.DB.prepare(
+    "SELECT p.id FROM preps p JOIN users u ON u.id = p.user_id WHERE p.id = ? AND u.manager_id = ? AND u.company_id = ? AND p.submitted_at != ''",
+  ).bind(c.req.param("id"), me.id, me.company_id).first();
+  if (!found) return c.json({ error: "相談文が見つかりません" }, 404);
+  const { verdict, comment } = await c.req.json<{ verdict?: string; comment?: string }>().catch(() => ({ verdict: "", comment: "" }));
+  const text = (comment ?? "").trim();
+  if (!verdict || !VERDICTS.includes(verdict)) return c.json({ error: "判断を選んでください" }, 400);
+  if (!text || Array.from(text).length > MAX_REPLY) return c.json({ error: `一言は1〜${MAX_REPLY}字で書いてください` }, 400);
+  const reply = { verdict, comment: text, repliedAt: new Date().toISOString() };
+  await c.env.DB.prepare("UPDATE preps SET reply_json = ?, updated_at = datetime('now') WHERE id = ?").bind(JSON.stringify(reply), c.req.param("id")).run();
+  return c.json(reply);
+});
+
+// 登録済みの商談から作るときの元の文。確定した商談だけを、自分の会社の中から読む
+const meetingStory = async (db: D1Database, id: string, companyId: string) => {
+  const m = await db.prepare(
+    `SELECT m.held_on, m.kind, m.participants, m.summary, m.decisions_json, m.open_issues_json, n.notes
+     FROM meetings m JOIN accounts a ON a.id = m.account_id LEFT JOIN meeting_notes n ON n.meeting_id = m.id
+     WHERE m.id = ? AND m.status = 'confirmed' AND a.company_id = ?`,
+  ).bind(id, companyId).first<{ held_on: string; kind: string; participants: string; summary: string; decisions_json: string; open_issues_json: string; notes: string | null }>();
+  if (!m) return null;
+  const list = (s: string) => (JSON.parse(s) as string[]).join("／");
+  return [`${m.held_on} ${m.kind}（${m.participants}）`, `要約：${m.summary}`, `決定：${list(m.decisions_json)}`, `残った論点：${list(m.open_issues_json)}`, m.notes ? `メモ：${m.notes}` : ""].filter(Boolean).join("\n");
+};
+
+// 登録済みの商談の一覧。新しい順。メモの本文は返さない
+managerRoutes.get("/drafts/meetings", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.id, m.held_on, m.kind, m.summary, a.name AS account_name, b.name AS buyer_name, n.meeting_id IS NOT NULL AS has_notes
+     FROM meetings m JOIN accounts a ON a.id = m.account_id JOIN buyers b ON b.id = m.buyer_id LEFT JOIN meeting_notes n ON n.meeting_id = m.id
+     WHERE m.status = 'confirmed' AND a.company_id = ? ORDER BY m.held_on DESC, m.id`,
+  ).bind(c.get("user").company_id).all();
+  return c.json(results);
+});
+
+// 取り込み：登録済みの商談・資料の文字 → カードの候補（pending）。ファイルは受け取らない
 managerRoutes.post("/drafts", async (c) => {
   const key = c.env.ANTHROPIC_API_KEY;
   if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
   const me = c.get("user");
-  const { story } = await c.req.json<{ story?: string }>();
-  const text = (story ?? "").trim();
+  const { story, meetingId } = await c.req.json<{ story?: string; meetingId?: string }>();
+  const fromMeeting = meetingId ? await meetingStory(c.env.DB, meetingId, me.company_id) : null;
+  if (meetingId && !fromMeeting) return c.json({ error: "確定した商談が見つかりません" }, 404);
+  const text = (fromMeeting ?? story ?? "").trim();
   const length = Array.from(text).length;
   if (length < MIN_STORY || length > MAX_STORY) return c.json({ error: `文字は${MIN_STORY}〜${MAX_STORY}字で貼ってください` }, 400);
   if (!(await hit(c.env.DB, `drafts:${me.id}`, DRAFTS_PER_HOUR, HOUR))) return c.json({ error: "取り込みの回数の上限です。しばらくしてからやり直してください" }, 429);

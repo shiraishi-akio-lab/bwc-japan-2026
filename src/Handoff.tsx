@@ -14,6 +14,7 @@ type Handoff = HandoffRow & {
 };
 
 const POLL_MS = 5000;
+const ENGLISH_TAIL = /\s*Please revise your work[^\n]*\s*$/; // 確かめ係の定型の締めは画面に出さない
 
 // 本文の [M1] を、議事録へのリンクにする
 function Inline({ text, labels, setView }: { text: string; labels: Record<string, Label>; setView: (v: View) => void }) {
@@ -89,6 +90,7 @@ export function HandoffPage({ id, setView, onError, onPractice }: { id: string; 
   }, [id, onError]);
   if (!h) return null;
   const round = h.evaluations.length + 1;
+  const finishing = h.evaluations.at(-1)?.result === "satisfied"; // 基準を満たした後の片づけの間
   return (
     <>
       <Card>
@@ -101,10 +103,10 @@ export function HandoffPage({ id, setView, onError, onPractice }: { id: string; 
         {h.evaluations.map((e) => (
           <details key={e.iteration} className="box" open={e.result === "needs_revision"}>
             <summary>{W.handoff.round(e.iteration + 1, e.result)}</summary>
-            <div className="pre small">{e.explanation}</div>
+            <div className="pre small">{e.explanation.replace(ENGLISH_TAIL, "")}</div>
           </details>
         ))}
-        {h.status === "running" && <Waiting>{h.grading ? W.handoff.checking(round) : W.handoff.writing(round)}</Waiting>}
+        {h.status === "running" && <Waiting>{finishing ? W.handoff.finishing : h.grading ? W.handoff.checking(round) : W.handoff.writing(round)}</Waiting>}
         {h.status === "failed" && <Notice>{W.handoff.failed}</Notice>}
         {h.status === "unpassed" && <Notice>{W.handoff.unpassed}</Notice>}
         {h.unknownLabels.length > 0 && <Notice>{W.handoff.unknown(h.unknownLabels.join("、"))}</Notice>}

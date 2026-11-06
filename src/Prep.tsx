@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { call } from "./api";
-import { PrepBrief } from "./Counterpart";
+import { InterestsPanel, PartnerSheet, PrepBrief } from "./Counterpart";
 import { useMe } from "./me";
-import { Approved, Ask, Band, Button, Card, Chat, ConsultSheet, Empty, ErrorNotice, Facts, LinkButton, Notice, Saved, Sub, Tag, Title, Waiting, Why, honor, personName, shortDate, type ConsultBody, type Turn } from "./ui";
+import { Approved, Ask, Band, Button, Card, Chat, ConsultSheet, DatePick, Empty, ErrorNotice, Facts, LinkButton, Notice, ReplyNote, Saved, Sub, Tag, Title, Waiting, Why, honor, personName, shortDate, type ConsultBody, type Reply, type Turn } from "./ui";
 import { W } from "./words";
 
 type BuyerOption = { id: string; name: string; role: string; account_name: string };
@@ -20,12 +20,14 @@ type Recap = {
 };
 type Prep = {
   consult: ConsultBody | null;
-  id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; meetingOn: string; submittedAt: string;
+  reply: Reply | null;
+  id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; accountId: string; accountSite: string; meetingOn: string; submittedAt: string;
+  goal: string; occasionId: string; occasionName: string;
   gainAnswer: string; causeHypothesis: string; returns: string[]; landing: string; stage: string; turns: Turn[];
 };
 
 // 段階の番号。画面には名前だけを出す（W.steps.names）
-const S = { entrance: 0, recap: 1, brief: 2, gain: 3, talk: 4, judgment: 5, returns: 6, again: 7, consult: 8 } as const;
+const S = { entrance: 0, goal: 1, recap: 2, brief: 3, gain: 4, talk: 5, judgment: 6, returns: 7, again: 8, consult: 9 } as const;
 const STEP_COUNT = W.steps.names.length;
 const KEY_LINE = "どれを外すの？";
 
@@ -40,6 +42,8 @@ const prepared = (p: Prep) => p.returns.length >= 2 && p.landing !== "";
 
 // その段階を開けるか。条件は依頼書の「次へ進む条件」
 function canOpen(step: number, p: Prep, seen: boolean) {
+  if (step <= S.goal) return true;
+  if (!p.goal) return false;
   if (step <= S.gain) return true;
   if (!p.gainAnswer) return false;
   if (step === S.talk) return true;
@@ -51,6 +55,7 @@ function canOpen(step: number, p: Prep, seen: boolean) {
 
 // 続きから開くときの段階
 function furthest(p: Prep) {
+  if (!p.goal) return S.goal;
   const moved = ["retry", "refused", "agreed", "ended"].includes(p.stage);
   if (prepared(p) && p.consult) return S.consult;
   if (prepared(p) && moved) return S.again;
@@ -84,6 +89,7 @@ export function PrepRoom({ onReview }: { onReview: (sessionId: string, turns: Tu
   const [prep, setPrep] = useState<Prep | null>(null);
   const [step, setStep] = useState<number>(S.entrance);
   const [seen, setSeen] = useState(false);
+  const [info, setInfo] = useState(false); // 相手の情報。段階の画面はそのまま残すので、書きかけは消えない
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(() => !!fromHash().id);
 
@@ -106,7 +112,7 @@ export function PrepRoom({ onReview }: { onReview: (sessionId: string, turns: Tu
     if (!id) return;
     call<Prep>(`/api/preps/${id}`).then((p) => {
       setPrep(p);
-      const n = wanted !== null && wanted >= S.recap && wanted < STEP_COUNT && canOpen(wanted, p, false) ? wanted : furthest(p);
+      const n = wanted !== null && wanted >= S.goal && wanted < STEP_COUNT && canOpen(wanted, p, false) ? wanted : furthest(p);
       setStep(n);
     }).catch((e: Error) => setError(e.message)).finally(() => setLoading(false));
   }, []);
@@ -133,11 +139,16 @@ export function PrepRoom({ onReview }: { onReview: (sessionId: string, turns: Tu
       <Band
         kind="self"
         left={`${personName(prep.accountName)} ${honor(personName(prep.buyerName))}｜${W.band.next} ${shortDate(prep.meetingOn)}`}
+        action={<button type="button" className="band-btn" aria-haspopup="dialog" onClick={() => setInfo(true)}>{W.partner.open}</button>}
         right={self}
       />
       <StepLine step={step} />
       <main className="page">
         <ErrorNotice message={error} />
+        {step !== S.goal && prep.goal && (
+          <p className="goal-line"><strong>{W.goal.line}</strong>{prep.occasionName && `（${prep.occasionName}）`}{prep.goal}</p>
+        )}
+        {step === S.goal && <GoalStep {...nav} />}
         {step === S.recap && <RecapStep {...nav} />}
         {step === S.brief && <BriefStep {...nav} />}
         {step === S.gain && <GainStep {...nav} />}
@@ -148,11 +159,12 @@ export function PrepRoom({ onReview }: { onReview: (sessionId: string, turns: Tu
         {step === S.consult && <ConsultStep {...nav} />}
         <div className="step-sub">
           <LinkButton onClick={() => { window.location.hash = ""; setPrep(null); setStep(S.entrance); setError(null); }}>{W.steps.other}</LinkButton>
-          {spoke && [S.talk, S.again, S.consult].includes(step as 4 | 7 | 8) && (
+          {spoke && [S.talk, S.again, S.consult].includes(step as 5 | 8 | 9) && (
             <LinkButton onClick={() => onReview(prep.sessionId, prep.turns, prep.buyerName)}>{W.steps.review}</LinkButton>
           )}
         </div>
       </main>
+      {info && <PartnerSheet prepId={prep.id} name={`${personName(prep.accountName)} ${honor(personName(prep.buyerName))}`} onClose={() => setInfo(false)} />}
     </>
   );
 }
@@ -182,17 +194,14 @@ function Entrance({ onOpen, onError }: { onOpen: (p: Prep) => void; onError: (m:
       <Card>
         <Title size="big" as="h1">{W.entrance.title}</Title>
         <p className="lead">{W.entrance.lead}</p>
-        <div className="row-end">
+        <div className="entrance-form">
           <label className="field">
             {W.entrance.partner}
             <select value={buyerId} onChange={(e) => setBuyerId(e.target.value)}>
               {buyers.map((b) => <option key={b.id} value={b.id}>{personName(b.account_name)} {honor(personName(b.name))}</option>)}
             </select>
           </label>
-          <label className="field">
-            {W.entrance.date}
-            <input type="date" value={meetingOn} onChange={(e) => setMeetingOn(e.target.value)} />
-          </label>
+          <DatePick label={W.entrance.date} value={meetingOn} onChange={setMeetingOn} />
           <Button onClick={start} disabled={!ready}>{W.entrance.start}</Button>
         </div>
         {!ready && <Why>{W.entrance.why}</Why>}
@@ -206,6 +215,7 @@ function Entrance({ onOpen, onError }: { onOpen: (p: Prep) => void; onError: (m:
               <span className="muted">{row.meeting_on}</span>
               <span className="pick-name">{personName(row.account_name)} {honor(personName(row.buyer_name))}</span>
               <Tag kind="step">{W.steps.names[step]}</Tag>
+              {prep.reply && !prep.reply.stale && <Tag kind="ok">{W.reply.tag}</Tag>}
             </button>
           ))}
         </div>
@@ -226,6 +236,49 @@ function StepNav({ back, children }: { back?: () => void; children: ReactNode })
   );
 }
 
+// 今回の目的：機会はコードが締切で絞り、何のために会うかは本人が書く（Claude は使わない）
+type Occasion = { id: string; name: string; store_action: string; deadline_on: string };
+function GoalStep({ prep, onChange, onError, go }: Nav) {
+  const [occasions, setOccasions] = useState<Occasion[] | null>(null);
+  const [pick, setPick] = useState(prep.occasionId);
+  const [goal, setGoal] = useState(prep.goal);
+  useEffect(() => {
+    call<{ events: Occasion[] }>(`/api/preps/${prep.id}/brief`).then((b) => setOccasions(b.events)).catch((e: Error) => onError(e.message));
+  }, [prep.id, onError]);
+  const picked = occasions?.find((o) => o.id === pick);
+  const ready = !!goal.trim() && (!!picked || occasions?.length === 0);
+  const next = () => call<Prep>(`/api/preps/${prep.id}`, "PATCH", { goal, occasionId: picked?.id ?? "" })
+    .then((p) => { onChange(p); go(S.recap); }).catch((e: Error) => onError(e.message));
+  return (
+    <>
+      <Card>
+        <Title size="big" as="h1">{W.steps.names[S.goal]}</Title>
+        <p className="lead">{W.goal.lead}</p>
+        <Sub>{W.goal.pick}</Sub>
+        {!occasions && <Waiting>{W.state.reading}</Waiting>}
+        {occasions?.length === 0 && <Empty>{W.goal.none}</Empty>}
+        <div className="grid-3">
+          {occasions?.map((o) => (
+            <button key={o.id} type="button" className={`pick${o.id === pick ? " pick-on" : ""}`} aria-pressed={o.id === pick} onClick={() => setPick(o.id)}>
+              <span className="pick-name">{o.name}</span>
+              <span className="muted">{W.goal.deadline(o.deadline_on)}</span>
+              <span>{o.store_action}</span>
+            </button>
+          ))}
+        </div>
+        {picked && !picked.store_action.includes("棚割り") && <Why>{W.goal.notShelf}</Why>}
+      </Card>
+      <Card>
+        <Ask question={W.goal.ask} value={goal} onChange={setGoal} rows={3} />
+      </Card>
+      <StepNav>
+        {!ready && <Why>{W.goal.why}</Why>}
+        <Button onClick={next} disabled={!ready}>{W.steps.next}</Button>
+      </StepNav>
+    </>
+  );
+}
+
 // 前回の続き：人が確定した記録だけを読む
 function RecapStep({ prep, onChange, onError, go }: Nav) {
   const [data, setData] = useState<Recap | null>(null);
@@ -237,7 +290,7 @@ function RecapStep({ prep, onChange, onError, go }: Nav) {
   const save = () => call<Prep>(`/api/preps/${prep.id}`, "PATCH", { causeHypothesis: cause }).then(onChange);
   // 書き留めずに進んでも、書いた文字を消さない
   const next = () => (cause.trim() && cause.trim() !== prep.causeHypothesis ? save() : Promise.resolve()).then(() => go(S.brief)).catch((e: Error) => onError(e.message));
-  const nextNav = <StepNav><Button onClick={next}>{W.steps.next}</Button></StepNav>;
+  const nextNav = <StepNav back={() => go(S.goal)}><Button onClick={next}>{W.steps.next}</Button></StepNav>;
   if (failed) return nextNav;
   if (!data) return <Waiting>{W.state.reading}</Waiting>;
   return (
@@ -285,13 +338,15 @@ function RecapStep({ prep, onChange, onError, go }: Nav) {
 }
 
 function BriefStep({ prep, onError, go }: Nav) {
+  const [used, setUsed] = useState(0); // 「使う」を押したら、下調べを読み直す
   return (
     <>
       <div className="stack">
         <Title size="big" as="h1">{W.steps.names[S.brief]}</Title>
         <p className="lead">{W.brief.lead}</p>
       </div>
-      <PrepBrief prepId={prep.id} written={[prep.gainAnswer, ...prep.returns, prep.landing].join("\n")} onError={onError} />
+      <PrepBrief prepId={prep.id} written={[prep.gainAnswer, ...prep.returns, prep.landing, used].join("\n")} onError={onError} />
+      <Card><InterestsPanel accountId={prep.accountId} siteUrl={prep.accountSite} onError={onError} onChange={() => setUsed((n) => n + 1)} reading /></Card>
       <StepNav back={() => go(S.recap)}><Button onClick={() => go(S.gain)}>{W.steps.next}</Button></StepNav>
     </>
   );
@@ -567,6 +622,12 @@ function ConsultStep({ prep, onChange, onError, go }: Nav) {
         {c && !prep.submittedAt && <Notice plain>{W.consult.onlyThis}</Notice>}
         {c && prep.submittedAt && <Saved>{W.consult.sent}</Saved>}
       </Card>
+      {prep.reply && (
+        <Card>
+          <Title>{prep.reply.stale ? W.reply.old : W.reply.from}</Title>
+          <ReplyNote r={prep.reply} />
+        </Card>
+      )}
       {c && (
         <Card>
           <Title>{W.consult.sheet}</Title>

@@ -1,19 +1,52 @@
 import { useCallback, useEffect, useState } from "react";
 import { Accounts, type View } from "./Accounts";
 import { call } from "./api";
-import { InterestsPanel } from "./Counterpart";
 import { Organize } from "./Organize";
 import { Shell } from "./Shell";
-import { Approved, Band, Button, Card, ConsultSheet, Empty, ErrorNotice, Facts, Pending, Sub, Title, honor, personName, type ConsultBody } from "./ui";
+import { Approved, Band, Button, Card, ConsultSheet, Empty, ErrorNotice, Facts, Pending, Saved, Sub, Title, Why, honor, personName, type ConsultBody, type Reply } from "./ui";
 import { W } from "./words";
 
-type Consult = ConsultBody & { id: string; repName: string; buyerName: string; accountName: string; meetingOn: string; submittedAt: string };
+type Consult = ConsultBody & { id: string; repName: string; buyerName: string; accountName: string; meetingOn: string; submittedAt: string; reply: Reply | null };
 type DraftCard = { title: string; scene: string; appliesWhen: string; situation: string; hypothesis: string; evidence: string; proposal: string; constraints: string; result: string; nextJudgment: string };
 type Draft = { id: string; createdAt: string; card: DraftCard };
-type AccountRow = { id: string; name: string };
-type AccountDetail = { account: { site_url: string } };
 type Rubric = { id: string; name: string };
 type OnError = (m: string | null) => void;
+
+// 相談文への返事。判断は3つから選び、条件や理由を一言添える
+const VERDICTS = ["go", "condition", "rethink"] as const;
+function ReplyForm({ c, onSent, onError }: { c: Consult; onSent: (r: Reply) => void; onError: OnError }) {
+  const [verdict, setVerdict] = useState<Reply["verdict"] | "">(c.reply?.verdict ?? "");
+  const [comment, setComment] = useState(c.reply?.comment ?? "");
+  const [busy, setBusy] = useState(false);
+  const ready = !!verdict && !!comment.trim();
+  const same = verdict === c.reply?.verdict && comment.trim() === c.reply?.comment;
+  const send = () => {
+    setBusy(true);
+    onError(null);
+    call<Reply>(`/api/consults/${c.id}/reply`, "POST", { verdict, comment }).then(onSent).catch((e: Error) => onError(e.message)).finally(() => setBusy(false));
+  };
+  return (
+    <div className="stack">
+      <Sub>{W.reply.title}</Sub>
+      <div className="grid-3">
+        {VERDICTS.map((v) => (
+          <button key={v} type="button" className={`pick${v === verdict ? " pick-on" : ""}`} aria-pressed={v === verdict} onClick={() => setVerdict(v)}>
+            <span className="pick-name">{W.reply.verdicts[v]}</span>
+          </button>
+        ))}
+      </div>
+      <label className="field">
+        {W.reply.comment}
+        <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={300} />
+      </label>
+      <div className="row">
+        <Button onClick={send} disabled={busy || !ready || same}>{c.reply ? W.reply.resend : W.reply.send}</Button>
+        {!ready && <Why>{W.reply.why}</Why>}
+        {c.reply && same && <Saved>{W.reply.done}</Saved>}
+      </div>
+    </div>
+  );
+}
 
 // 部下から届いた相談文。若手が「上司に出す」を押したものだけ。練習の中身はここに来ない
 function Consults({ onError }: { onError: OnError }) {
@@ -33,6 +66,7 @@ function Consults({ onError }: { onError: OnError }) {
           <Title size="mid">{personName(c.repName)}：{W.consult.title(personName(c.accountName), honor(personName(c.buyerName)), c.meetingOn)}</Title>
           <ConsultSheet c={c} />
           <small>{W.manager.arrived(c.submittedAt)}</small>
+          <ReplyForm c={c} onError={onError} onSent={(r) => setRows((all) => all?.map((x) => (x.id === c.id ? { ...x, reply: r } : x)) ?? null)} />
         </Card>
       ))}
     </>
@@ -80,23 +114,6 @@ function CardCandidates({ onError }: { onError: OnError }) {
   );
 }
 
-function InterestCandidates({ onError }: { onError: OnError }) {
-  const [accounts, setAccounts] = useState<(AccountRow & { siteUrl: string })[]>([]);
-  useEffect(() => {
-    call<AccountRow[]>("/api/accounts")
-      .then((rows) => Promise.all(rows.map(async (a) => ({ ...a, siteUrl: (await call<AccountDetail>(`/api/accounts/${a.id}`)).account.site_url }))))
-      .then((rows) => setAccounts(rows.filter((a) => a.siteUrl)))
-      .catch((e: Error) => onError(e.message));
-  }, [onError]);
-  return (
-    <>
-      {accounts.map((a) => (
-        <InterestsPanel key={a.id} accountId={a.id} siteUrl={a.siteUrl} onError={onError} title={`${W.manager.interests}（${personName(a.name)}）`} lead="" empty={W.manager.noCards} />
-      ))}
-    </>
-  );
-}
-
 export function Manager({ onLogout }: { onLogout: () => void }) {
   const [mode, setMode] = useState<"consults" | "candidates" | "import" | "accounts">("consults");
   const [view, setView] = useState<View>({ name: "list" });
@@ -122,7 +139,6 @@ export function Manager({ onLogout }: { onLogout: () => void }) {
             <Title size="big" as="h1">{W.manager.candidates}</Title>
             <p className="lead">{W.manager.candidatesLead}</p>
             <CardCandidates onError={setError} />
-            <InterestCandidates onError={setError} />
           </Card>
         )}
         {mode === "import" && <Organize axisName={(id) => axes.find((a) => a.id === id)?.name ?? id} />}

@@ -339,7 +339,7 @@ export async function organize(apiKey: string, story: string): Promise<CardDraft
     output_config: { effort: "medium", format: zodOutputFormat(DraftSchema) },
     system: [{ type: "text", text: ORGANIZE_SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: `## ベテランの語り\n${story}` }],
-  });
+  }, { timeout: 40_000, maxRetries: 1 }); // 応答が止まっても画面が待ち続けないようにする
   if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("整理する係の応答が得られませんでした");
   return res.parsed_output;
 }
@@ -391,6 +391,8 @@ const ConsultSchema = z.object({
 });
 
 export type ConsultInput = {
+  goal: string;
+  occasion: string;
   gainAnswer: string;
   returns: string[];
   landing: string;
@@ -402,7 +404,7 @@ const CONSULT_SYSTEM = `あなたは若手営業が上司に渡す相談文を�
 
 ## 書き方の決まり
 - 入力に書かれていることだけを使う。入力に無い数字・品名・条件を足さない。
-- summary：何を相談したいかを2文以内で。
+- summary：今回の目的（goal）に沿って、何を相談したいかを2文以内で。
 - concessions：入力の返しと同じ順番で、1本につき1文、その返しで自社が譲るものを書く。譲るものが読み取れなければ「確かめが要る」とだけ書く。「入力」という言葉を文に出さない。
 - asks：上司に確かめたいことを2〜3個、「〜してよいでしょうか」の形で書く。自社品を外す案があれば、必ず1つ入れる。
 - 決めるのは上司。勧める・決めつける言い方をしない。

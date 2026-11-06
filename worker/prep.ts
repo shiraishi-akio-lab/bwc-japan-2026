@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { buildRecord, buyerPersona, confirmedResults, loadBuyer } from "./accounts";
 import { approvedCard, cardBody, DEMO_CARD_ID } from "./card";
 import { buyerOpening, buyerStaged, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, writeConsult, type BuyerMove, type Turn } from "./claude";
-import { buyerBriefText, prepBrief } from "./counterpart";
+import { buyerBriefText, confirmedPromises, prepBrief, prepPartner } from "./counterpart";
 import { cases } from "./data";
 import { companyCards } from "./manager";
+import { loadPos } from "./pos";
 import { agreementCondition, buyerShelfNotes, loadShelf, shelfCandidates, type ShelfItem } from "./shelf";
 import type { AppEnv, SessionUser } from "./types";
 
@@ -19,8 +20,9 @@ export type Stage = "opening" | "asked" | "retry" | "refused" | "agreed" | "ende
 type PrepRow = {
   id: string; session_id: string; buyer_id: string; meeting_on: string; gain_answer: string; cause_hypothesis: string;
   returns_json: string; landing: string; stage: Stage; round_turns: number; consult_json: string; submitted_at: string;
+  goal: string; occasion_id: string; reply_json: string;
 };
-const PREP_COLS = "id, session_id, buyer_id, meeting_on, gain_answer, cause_hypothesis, returns_json, landing, stage, round_turns, consult_json, submitted_at";
+const PREP_COLS = "id, session_id, buyer_id, meeting_on, gain_answer, cause_hypothesis, returns_json, landing, stage, round_turns, consult_json, submitted_at, goal, occasion_id, reply_json";
 
 export const loadTurns = async (db: D1Database, sessionId: string): Promise<Turn[]> => {
   const { results } = await db
@@ -34,6 +36,10 @@ export const loadTurns = async (db: D1Database, sessionId: string): Promise<Turn
 const loadPrep = (db: D1Database, id: string, me: SessionUser) =>
   db.prepare(`SELECT ${PREP_COLS} FROM preps WHERE id = ? AND user_id = ?`).bind(id, me.id).first<PrepRow>();
 const returnsOf = (p: PrepRow) => JSON.parse(p.returns_json) as string[];
+// 相談文が変わったら、上司の返事は「前の相談への返事」になる
+const staleReply = (s: string) => (s ? JSON.stringify({ ...JSON.parse(s), stale: true }) : "");
+const occasionName = async (db: D1Database, id: string) =>
+  id ? (await db.prepare("SELECT name FROM season_events WHERE id = ?").bind(id).first<{ name: string }>())?.name ?? "" : "";
 
 // 画面に返す形。persona は読まない
 const prepView = async (db: D1Database, p: PrepRow, me: SessionUser) => {
@@ -44,13 +50,19 @@ const prepView = async (db: D1Database, p: PrepRow, me: SessionUser) => {
     buyerId: p.buyer_id,
     buyerName: found?.buyer.name ?? "",
     accountName: found?.account.name ?? "",
+    accountId: found?.account.id ?? "",
+    accountSite: found?.account.site_url ?? "",
     meetingOn: p.meeting_on,
+    goal: p.goal,
+    occasionId: p.occasion_id,
+    occasionName: await occasionName(db, p.occasion_id),
     gainAnswer: p.gain_answer,
     causeHypothesis: p.cause_hypothesis,
     returns: returnsOf(p),
     landing: p.landing,
     stage: p.stage,
     consult: p.consult_json ? JSON.parse(p.consult_json) : null,
+    reply: p.reply_json ? JSON.parse(p.reply_json) : null,
     submittedAt: p.submitted_at,
     turns: await loadTurns(db, p.session_id),
   };
@@ -110,7 +122,7 @@ prepRoutes.get("/preps/:id", async (c) => {
   return c.json(await prepView(c.env.DB, p, c.get("user")));
 });
 
-type PrepBody = { gainAnswer?: string; causeHypothesis?: string; returns?: string[]; landing?: string };
+type PrepBody = { goal?: string; occasionId?: string; gainAnswer?: string; causeHypothesis?: string; returns?: string[]; landing?: string };
 const text = (s: string) => s.trim().slice(0, MAX_TEXT);
 
 // 書いた内容を残す。段階は画面から変えられない
@@ -118,20 +130,26 @@ prepRoutes.patch("/preps/:id", async (c) => {
   const p = await loadPrep(c.env.DB, c.req.param("id"), c.get("user"));
   if (!p) return c.json({ error: "準備が見つかりません" }, 404);
   const b = await c.req.json<PrepBody>();
+  const goal = b.goal === undefined ? p.goal : text(b.goal);
+  const occasion = b.occasionId === undefined ? p.occasion_id : b.occasionId;
+  if (occasion !== p.occasion_id && !(await occasionName(c.env.DB, occasion))) return c.json({ error: "機会を選び直してください" }, 400);
   const gain = b.gainAnswer === undefined ? p.gain_answer : text(b.gainAnswer);
   const returns = JSON.stringify(b.returns ? b.returns.map(text).filter(Boolean).slice(0, MAX_RETURNS) : returnsOf(p));
   const landing = b.landing === undefined ? p.landing : text(b.landing);
   // 相談文の元が変わったら、古い1枚を残さない
-  const stale = gain !== p.gain_answer || returns !== p.returns_json || landing !== p.landing;
+  const stale = goal !== p.goal || occasion !== p.occasion_id || gain !== p.gain_answer || returns !== p.returns_json || landing !== p.landing;
   await c.env.DB.prepare(
-    "UPDATE preps SET gain_answer = ?, cause_hypothesis = ?, returns_json = ?, landing = ?, consult_json = ?, submitted_at = ?, updated_at = datetime('now') WHERE id = ?",
+    "UPDATE preps SET goal = ?, occasion_id = ?, gain_answer = ?, cause_hypothesis = ?, returns_json = ?, landing = ?, consult_json = ?, submitted_at = ?, reply_json = ?, updated_at = datetime('now') WHERE id = ?",
   ).bind(
+    goal,
+    occasion,
     gain,
     b.causeHypothesis === undefined ? p.cause_hypothesis : text(b.causeHypothesis),
     returns,
     landing,
     stale ? "" : p.consult_json,
     stale ? "" : p.submitted_at,
+    stale ? staleReply(p.reply_json) : p.reply_json,
     p.id,
   ).run();
   return c.json(await prepView(c.env.DB, (await loadPrep(c.env.DB, p.id, c.get("user")))!, c.get("user")));
@@ -141,6 +159,7 @@ prepRoutes.patch("/preps/:id", async (c) => {
 prepRoutes.get("/preps/:id/judgment", async (c) => {
   const p = await loadPrep(c.env.DB, c.req.param("id"), c.get("user"));
   if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  if (!p.goal.trim()) return c.json({ error: "先に、今回は何のために会うかを書いてください" }, 409);
   if (!p.gain_answer.trim()) return c.json({ error: "先に、相手の得は何かを書いてください" }, 409);
   if (p.stage === "opening") return c.json({ error: "先に、バイヤーの問いを受けてください" }, 409);
   const found = await loadBuyer(c.env.DB, p.buyer_id, c.get("user").company_id);
@@ -160,6 +179,7 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
   const { text: raw } = await c.req.json<{ text?: string }>();
   const said = (raw ?? "").trim();
   if (!said || said.length > MAX_TEXT) return c.json({ error: `発言は1〜${MAX_TEXT}字で入力してください` }, 400);
+  if (!p.goal.trim()) return c.json({ error: "先に、今回は何のために会うかを書いてください" }, 409);
   if (!p.gain_answer.trim()) return c.json({ error: "先に、相手の得は何かを書いてください" }, 409);
   if (p.stage === "agreed" || p.stage === "ended") return c.json({ error: "この回は終わりです。答え直すか、相談文に進んでください" }, 409);
 
@@ -189,7 +209,8 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
     const key = c.env.ANTHROPIC_API_KEY;
     if (!key) return c.json({ error: "API キーが設定されていません" }, 503);
     const brief = await briefOf(db, p, found);
-    const record = [await buildRecord(db, found.buyer, found.account), buyerBriefText(brief)].filter(Boolean).join("\n");
+    const topic = await occasionName(db, p.occasion_id); // 本人の目的は渡さない。相手は知らないはずのことなので
+    const record = [await buildRecord(db, found.buyer, found.account), buyerBriefText(brief), topic && `今回の商談の話題：${topic}`].filter(Boolean).join("\n");
     const turns: Turn[] = [...history, { role: "rep", content: said }];
     const repSaid = [...repLines, said].join("\n");
     const notes = await buyerShelfNotes(db, found.account.id);
@@ -234,10 +255,11 @@ prepRoutes.post("/preps/:id/consult", async (c) => {
     name, maker, is_own, facings, weekly_units, yoy_pct,
   }));
   const returns = returnsOf(p);
-  const draft = await writeConsult(key, { gainAnswer: p.gain_answer, returns, landing: p.landing, candidates });
-  const consult = { gainAnswer: p.gain_answer, returns, landing: p.landing, ...draft };
+  const occasion = await occasionName(db, p.occasion_id);
+  const draft = await writeConsult(key, { goal: p.goal, occasion, gainAnswer: p.gain_answer, returns, landing: p.landing, candidates });
+  const consult = { goal: p.goal, occasion, gainAnswer: p.gain_answer, returns, landing: p.landing, ...draft };
   // 書き直した1枚は、まだ上司に出していない
-  await db.prepare("UPDATE preps SET consult_json = ?, submitted_at = '', updated_at = datetime('now') WHERE id = ?").bind(JSON.stringify(consult), p.id).run();
+  await db.prepare("UPDATE preps SET consult_json = ?, submitted_at = '', reply_json = ?, updated_at = datetime('now') WHERE id = ?").bind(JSON.stringify(consult), staleReply(p.reply_json), p.id).run();
   return c.json(await prepView(db, (await loadPrep(db, p.id, c.get("user")))!, c.get("user")));
 });
 
@@ -257,8 +279,19 @@ prepRoutes.post("/preps/:id/consult/send", async (c) => {
 prepRoutes.get("/preps/:id/brief", async (c) => {
   const p = await loadPrep(c.env.DB, c.req.param("id"), c.get("user"));
   if (!p) return c.json({ error: "準備が見つかりません" }, 404);
-  const found = (await loadBuyer(c.env.DB, p.buyer_id, c.get("user").company_id))!;
-  return c.json(await briefOf(c.env.DB, p, found));
+  const found = await loadBuyer(c.env.DB, p.buyer_id, c.get("user").company_id);
+  if (!found) return c.json({ error: "準備が見つかりません" }, 404);
+  // POS は画面にだけ返す。Claude への入力（briefOf の先）には入れない
+  return c.json({ ...(await briefOf(c.env.DB, p, found)), pos: await loadPos(c.env.DB, found.account.id, p.meeting_on) });
+});
+
+// 相手の情報：どの段階からでも開く1枚。本人の準備の相手の分だけを返す
+prepRoutes.get("/preps/:id/partner", async (c) => {
+  const p = await loadPrep(c.env.DB, c.req.param("id"), c.get("user"));
+  if (!p) return c.json({ error: "準備が見つかりません" }, 404);
+  const found = await loadBuyer(c.env.DB, p.buyer_id, c.get("user").company_id);
+  if (!found) return c.json({ error: "準備が見つかりません" }, 404);
+  return c.json(await prepPartner(c.env.DB, found.buyer, found.account, p.meeting_on));
 });
 
 // 前回の続き：確定した商談の約束と施策の結果だけを出す。結果が悪ければ原因の仮説を問う
@@ -269,10 +302,8 @@ prepRoutes.get("/preps/:id/recap", async (c) => {
   const [meeting, promises, results] = await Promise.all([
     db.prepare("SELECT held_on, kind, summary FROM meetings WHERE buyer_id = ? AND status = 'confirmed' ORDER BY held_on DESC LIMIT 1")
       .bind(p.buyer_id).first<{ held_on: string; kind: string; summary: string }>(),
-    db.prepare(
-      "SELECT r.text, r.due FROM promises r JOIN meetings m ON m.id = r.meeting_id WHERE m.buyer_id = ? AND m.status = 'confirmed' AND r.done = 0 ORDER BY m.held_on DESC",
-    ).bind(p.buyer_id).all<{ text: string; due: string }>(),
+    confirmedPromises(db, p.buyer_id),
     confirmedResults(db, p.buyer_id),
   ]);
-  return c.json({ meeting, promises: promises.results, results, askCause: results.some((r) => r.outcome === "bad") });
+  return c.json({ meeting, promises, results, askCause: results.some((r) => r.outcome === "bad") });
 });

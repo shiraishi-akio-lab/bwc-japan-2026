@@ -217,7 +217,7 @@ export function App({ onLogout }: { onLogout: () => void }) {
                   <div className="row">
                     <Button onClick={checkIt} disabled={busy || !spoke}>{W.practice.check}</Button>
                     {!isRecording && !fromPrep && <Button ghost onClick={() => setMemoOpen(false)} disabled={busy}>{W.practice.backTalk}</Button>}
-                    {busy && <Waiting>{W.state.thinking}</Waiting>}
+                    {busy && <Waiting>{W.state.checking}</Waiting>}
                   </div>
                 </Card>
                 <Card>

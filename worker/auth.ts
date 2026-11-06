@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
-import { findRule } from "./access";
+import { DAY_LIMITS, findRule } from "./access";
 import type { AppEnv, SessionUser } from "./types";
 
 const ITERATIONS = 100_000; // PBKDF2 の反復回数
 const SESSION_SECONDS = 8 * 60 * 60;
+const DAY = 24 * 60 * 60;
 const MAX_EMAIL = 254;
 const MAX_PASSWORD = 200;
 
@@ -92,6 +93,9 @@ export const guard = createMiddleware<AppEnv>(async (c, next) => {
   if (!user) return c.json({ error: "ログインしてください" }, 401);
   if (!found) return c.json({ error: "見つかりません" }, 404);
   if (found.allow !== "any" && !found.allow.includes(user.role)) return c.json({ error: "この操作の権限がありません" }, 403);
+  if (found.limit && !(await hit(c.env.DB, `${found.limit}:${user.id}`, DAY_LIMITS[found.limit], DAY))) {
+    return c.json({ error: "今日の回数の上限です。明日また使えます" }, 429);
+  }
   c.set("user", user);
   await next();
 });
