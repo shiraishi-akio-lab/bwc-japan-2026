@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { box, call, link } from "./Accounts";
+import { PrepBrief } from "./Counterpart";
 
 type Turn = { role: "rep" | "buyer"; content: string };
 type BuyerOption = { id: string; name: string; role: string; account_name: string };
@@ -18,7 +19,7 @@ type Recap = {
 type Consult = { gainAnswer: string; returns: string[]; landing: string; summary: string; concessions: string[]; asks: string[] };
 type Prep = {
   consult: Consult | null;
-  id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; meetingOn: string;
+  id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; meetingOn: string; submittedAt: string;
   gainAnswer: string; causeHypothesis: string; returns: string[]; landing: string; stage: string; turns: Turn[];
 };
 
@@ -50,6 +51,7 @@ export function PrepRoom({ onReview }: { onReview: (sessionId: string, turns: Tu
           </p>
           <button style={link} onClick={() => { window.location.hash = ""; setPrep(null); }}>← 別の準備を開く</button>
           <Recap prep={prep} onChange={setPrep} onError={setError} />
+          <PrepBrief prepId={prep.id} written={[prep.gainAnswer, ...prep.returns, prep.landing].join("\n")} onError={setError} />
           <Gain prep={prep} onChange={setPrep} onError={setError} />
           {prep.gainAnswer && <Practice prep={prep} onChange={setPrep} onError={setError} />}
           {prep.gainAnswer && prep.stage !== "opening" && <Judgment key={prep.id} prep={prep} onChange={setPrep} onError={setError} />}
@@ -214,9 +216,9 @@ const cell = { padding: "4px 8px", borderBottom: "1px solid #ddd", textAlign: "l
 
 // ベテランの判断：若手が問いを受けて答えた後に見る。出すかどうかはサーバーが決める
 function Judgment({ prep, onChange, onError }: Step) {
-  const [data, setData] = useState<{ candidates: Candidate[]; card: Card | null } | null>(null);
+  const [data, setData] = useState<{ candidates: Candidate[]; card: Card | null; moreCards: Card[] } | null>(null);
   const show = useCallback(
-    () => call<{ candidates: Candidate[]; card: Card | null }>(`/api/preps/${prep.id}/judgment`).then(setData).catch((e: Error) => onError(e.message)),
+    () => call<{ candidates: Candidate[]; card: Card | null; moreCards: Card[] }>(`/api/preps/${prep.id}/judgment`).then(setData).catch((e: Error) => onError(e.message)),
     [prep.id, onError],
   );
   const preparing = prep.stage !== "asked" || prep.returns.length > 0 || prep.landing !== "";
@@ -258,6 +260,14 @@ function Judgment({ prep, onChange, onError }: Step) {
       ) : (
         <p style={{ color: "#777" }}>カード準備中</p>
       )}
+      {data.moreCards.length > 0 && <h3>会社で承認された、ほかのカード</h3>}
+      {data.moreCards.map((m) => (
+        <div key={m.id} style={box}>
+          <strong>{m.title}</strong>
+          <p style={{ margin: "8px 0", whiteSpace: "pre-wrap" }}><small style={{ color: "#555" }}>提案</small><br />{m.proposal}</p>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#555" }}>{m.author}</p>
+        </div>
+      ))}
       <Returns prep={prep} onChange={onChange} onError={onError} />
     </>
   );
@@ -312,6 +322,17 @@ function ConsultSheet({ prep, onChange, onError }: Step) {
       setBusy(false);
     }
   };
+  const send = async () => {
+    setBusy(true);
+    onError(null);
+    try {
+      onChange(await call<Prep>(`/api/preps/${prep.id}/consult/send`, "POST"));
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const c = prep.consult;
   return (
     <>
@@ -333,6 +354,9 @@ function ConsultSheet({ prep, onChange, onError }: Step) {
           <ul style={{ margin: "4px 0", paddingLeft: 20 }}>{c.asks.map((a, i) => <li key={i}>{a}</li>)}</ul>
         </div>
       )}
+      {c && (prep.submittedAt
+        ? <p style={{ color: "#137333" }}>上司に出しました。書き直したら、もう一度出してください。</p>
+        : <p><button onClick={send} disabled={busy}>上司に出す</button> <small style={{ color: "#555" }}>届くのはこの1枚だけです。練習の内容は届きません。</small></p>)}
     </>
   );
 }

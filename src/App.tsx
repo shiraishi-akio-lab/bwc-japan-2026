@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Accounts, type View } from "./Accounts";
-import { Organize } from "./Organize";
 import { PrepRoom } from "./Prep";
 import { Recording } from "./Recording";
+import { noticeExpired } from "./me";
 
 type Turn = { role: "rep" | "buyer"; content: string };
 type Axis = { id: string; name: string; question: string };
@@ -21,6 +21,7 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  noticeExpired(r.status);
   const data = (await r.json()) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
   return data;
@@ -35,7 +36,7 @@ export function App() {
   const [result, setResult] = useState<AxisResult[] | null>(null);
   const [next, setNext] = useState<NextAction | null>(null);
   const [showMap, setShowMap] = useState(false);
-  const [mode, setMode] = useState<"prep" | "practice" | "recording" | "organize" | "accounts">("prep");
+  const [mode, setMode] = useState<"prep" | "practice" | "recording" | "accounts">("prep");
   const [view, setView] = useState<View>({ name: "list" });
   const [buyers, setBuyers] = useState<BuyerOption[]>([]);
   const [buyerId, setBuyerId] = useState("buyer-saeki");
@@ -121,18 +122,16 @@ export function App() {
 
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "32px auto", padding: "0 16px", lineHeight: 1.6 }}>
-      <h1 style={{ marginBottom: 4 }}>隣席コーチ</h1>
+      <h1 style={{ marginBottom: 4 }}>営業GYM</h1>
       <p style={{ marginTop: 0, color: "#555" }}>商談の数日前に、得意先の得から話す準備をする。結果は本人だけが見る。</p>
       <nav style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={() => setMode("prep")} disabled={mode === "prep"}>若手：商談の準備</button>
         <button onClick={() => setMode("practice")} disabled={mode === "practice"}>若手：練習する</button>
         <button onClick={() => setMode("recording")} disabled={mode === "recording"}>若手：本番を振り返る</button>
-        <button onClick={() => setMode("organize")} disabled={mode === "organize"}>ベテラン：語りを残す</button>
         <button onClick={() => { setView({ name: "list" }); setMode("accounts"); }} disabled={mode === "accounts"}>取引先の記録</button>
       </nav>
 
       {mode === "prep" && <PrepRoom onReview={fromPrepRoom} />}
-      {mode === "organize" && <Organize axisName={axisName} />}
       {mode === "recording" && <Recording buyers={buyers} onReady={fromRecording} />}
       {mode === "accounts" && (
         <Accounts view={view} setView={setView} onPractice={(id) => { setBuyerId(id); setSessionId(null); setResult(null); setNext(null); setMode("practice"); }} />

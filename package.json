@@ -18,6 +18,7 @@
     "eval:holdout": "npm run knowledge && tsx --env-file=.dev.vars scripts/eval-holdout.ts",
     "eval:variants": "tsx --env-file=.dev.vars scripts/eval-variants.ts",
     "eval:similar": "npm run knowledge && tsx --env-file=.dev.vars scripts/eval-similar.ts",
+    "demo:users": "tsx scripts/demo-users.ts",
     "demo:reset": "node scripts/demo-reset.mjs",
     "demo:check": "tsx scripts/demo-check.ts"
   },

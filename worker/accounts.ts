@@ -1,8 +1,7 @@
 import { Hono } from "hono";
+import type { AppEnv } from "./types";
 
-type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string };
-
-export type Account = { id: string; name: string; format: string; stores: number; profile: string; rules: string; owner_rep: string };
+export type Account = { id: string; name: string; format: string; stores: number; profile: string; rules: string; owner_rep: string; site_url: string };
 export type Buyer = { id: string; account_id: string; name: string; role: string; status: string; persona: string };
 type Meeting = {
   id: string; account_id: string; buyer_id: string; held_on: string; kind: string; participants: string;
@@ -18,12 +17,20 @@ const parseMeeting = ({ decisions_json, open_issues_json, ...m }: Meeting) => ({
 // persona はバイヤー役だけが知っていること。画面には返さない
 const publicBuyer = ({ persona: _persona, ...b }: Buyer) => b;
 
-export const loadBuyer = async (db: D1Database, buyerId: string) => {
-  const buyer = await db.prepare("SELECT * FROM buyers WHERE id = ?").bind(buyerId).first<Buyer>();
+// 取引先は会社の範囲で引く。ほかの会社の id なら無いものとして扱う
+export const loadAccount = (db: D1Database, id: string, companyId: string) =>
+  db.prepare("SELECT id, name, format, stores, profile, rules, owner_rep, site_url FROM accounts WHERE id = ? AND company_id = ?")
+    .bind(id, companyId).first<Account>();
+
+export const loadBuyer = async (db: D1Database, buyerId: string, companyId: string) => {
+  const buyer = await db.prepare("SELECT id, account_id, name, role, status, persona FROM buyers WHERE id = ?").bind(buyerId).first<Buyer>();
   if (!buyer) return null;
-  const account = await db.prepare("SELECT * FROM accounts WHERE id = ?").bind(buyer.account_id).first<Account>();
+  const account = await loadAccount(db, buyer.account_id, companyId);
   return account ? { buyer, account } : null;
 };
+
+const IN_COMPANY = "m.account_id IN (SELECT id FROM accounts WHERE company_id = ?)";
+const MEETING_COLS = "m.id, m.account_id, m.buyer_id, m.held_on, m.kind, m.participants, m.summary, m.decisions_json, m.open_issues_json, m.status";
 
 export type InitiativeResult = { initiative: string; result: string; outcome: "good" | "bad"; held_on: string };
 
@@ -65,46 +72,46 @@ export const buyerPersona = (buyer: Buyer, account: Account, record: string) =>
     record ? `## これまでの記録\n${record}` : "",
   ].filter(Boolean).join("\n\n");
 
-export const accountRoutes = new Hono<{ Bindings: Bindings }>();
+export const accountRoutes = new Hono<AppEnv>();
 
 accountRoutes.get("/accounts", async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT a.id, a.name, a.format, a.stores, a.owner_rep,
        (SELECT COUNT(*) FROM buyers b WHERE b.account_id = a.id AND b.status = '現役') AS buyer_count,
        (SELECT MAX(held_on) FROM meetings m WHERE m.account_id = a.id) AS last_met
-     FROM accounts a ORDER BY a.name`,
-  ).all();
+     FROM accounts a WHERE a.company_id = ? ORDER BY a.name`,
+  ).bind(c.get("user").company_id).all();
   return c.json(results);
 });
 
 accountRoutes.get("/buyers", async (c) => {
   const { results } = await c.env.DB.prepare(
-    "SELECT b.id, b.name, b.role, b.status, a.name AS account_name FROM buyers b JOIN accounts a ON a.id = b.account_id WHERE b.status = '現役' ORDER BY a.name",
-  ).all();
+    "SELECT b.id, b.name, b.role, b.status, a.name AS account_name FROM buyers b JOIN accounts a ON a.id = b.account_id WHERE b.status = '現役' AND a.company_id = ? ORDER BY a.name",
+  ).bind(c.get("user").company_id).all();
   return c.json(results);
 });
 
 accountRoutes.get("/accounts/:id", async (c) => {
   const id = c.req.param("id");
-  const account = await c.env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first<Account>();
+  const account = await loadAccount(c.env.DB, id, c.get("user").company_id);
   if (!account) return c.json({ error: "取引先が見つかりません" }, 404);
   const [buyers, meetings] = await Promise.all([
-    c.env.DB.prepare("SELECT * FROM buyers WHERE account_id = ? ORDER BY status, name").bind(id).all<Buyer>(),
+    c.env.DB.prepare("SELECT id, account_id, name, role, status FROM buyers WHERE account_id = ? ORDER BY status, name").bind(id).all(),
     c.env.DB.prepare(
-      "SELECT m.*, b.name AS buyer_name FROM meetings m JOIN buyers b ON b.id = m.buyer_id WHERE m.account_id = ? ORDER BY m.held_on DESC",
+      `SELECT ${MEETING_COLS}, b.name AS buyer_name FROM meetings m JOIN buyers b ON b.id = m.buyer_id WHERE m.account_id = ? ORDER BY m.held_on DESC`,
     ).bind(id).all<Meeting>(),
   ]);
-  return c.json({ account, buyers: buyers.results.map(publicBuyer), meetings: meetings.results.map(parseMeeting) });
+  return c.json({ account, buyers: buyers.results, meetings: meetings.results.map(parseMeeting) });
 });
 
 accountRoutes.get("/buyers/:id", async (c) => {
   const id = c.req.param("id");
-  const found = await loadBuyer(c.env.DB, id);
+  const found = await loadBuyer(c.env.DB, id, c.get("user").company_id);
   if (!found) return c.json({ error: "担当バイヤーが見つかりません" }, 404);
   const [priorities, promises] = await Promise.all([
-    c.env.DB.prepare("SELECT * FROM priorities WHERE buyer_id = ? AND status != 'rejected' ORDER BY noted_on DESC").bind(id).all(),
+    c.env.DB.prepare("SELECT id, text, basis, noted_on, status FROM priorities WHERE buyer_id = ? AND status != 'rejected' ORDER BY noted_on DESC").bind(id).all(),
     c.env.DB.prepare(
-      "SELECT p.*, m.held_on, m.status AS meeting_status FROM promises p JOIN meetings m ON m.id = p.meeting_id WHERE m.buyer_id = ? ORDER BY p.done, m.held_on DESC",
+      "SELECT p.id, p.text, p.due, p.done, m.held_on, m.status AS meeting_status FROM promises p JOIN meetings m ON m.id = p.meeting_id WHERE m.buyer_id = ? ORDER BY p.done, m.held_on DESC",
     ).bind(id).all(),
   ]);
   return c.json({ buyer: publicBuyer(found.buyer), account: found.account, priorities: priorities.results, promises: promises.results });
@@ -113,12 +120,12 @@ accountRoutes.get("/buyers/:id", async (c) => {
 accountRoutes.get("/meetings/:id", async (c) => {
   const id = c.req.param("id");
   const m = await c.env.DB.prepare(
-    "SELECT m.*, b.name AS buyer_name FROM meetings m JOIN buyers b ON b.id = m.buyer_id WHERE m.id = ?",
-  ).bind(id).first<Meeting>();
+    `SELECT ${MEETING_COLS}, b.name AS buyer_name FROM meetings m JOIN buyers b ON b.id = m.buyer_id WHERE m.id = ? AND ${IN_COMPANY}`,
+  ).bind(id, c.get("user").company_id).first<Meeting>();
   if (!m) return c.json({ error: "議事録が見つかりません" }, 404);
   const [promises, priorities] = await Promise.all([
-    c.env.DB.prepare("SELECT * FROM promises WHERE meeting_id = ? ORDER BY created_at").bind(id).all(),
-    c.env.DB.prepare("SELECT * FROM priorities WHERE meeting_id = ? AND status != 'rejected' ORDER BY created_at").bind(id).all(),
+    c.env.DB.prepare("SELECT id, text, due, done FROM promises WHERE meeting_id = ? ORDER BY created_at").bind(id).all(),
+    c.env.DB.prepare("SELECT id, text, basis, noted_on, status FROM priorities WHERE meeting_id = ? AND status != 'rejected' ORDER BY created_at").bind(id).all(),
   ]);
   return c.json({ ...parseMeeting(m), promises: promises.results, priorities: priorities.results });
 });
@@ -133,7 +140,7 @@ const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 // 録音が無い商談は、議事録を手で書いて残す
 accountRoutes.post("/meetings", async (c) => {
   const b = await c.req.json<MeetingBody>();
-  const found = b.buyerId ? await loadBuyer(c.env.DB, b.buyerId) : null;
+  const found = b.buyerId ? await loadBuyer(c.env.DB, b.buyerId, c.get("user").company_id) : null;
   if (!found) return c.json({ error: "担当バイヤーを選んでください" }, 400);
   if (!b.heldOn || !isDate(b.heldOn)) return c.json({ error: "日付を入れてください" }, 400);
   const summary = (b.summary ?? "").trim().slice(0, MAX_FIELD);
@@ -146,12 +153,14 @@ accountRoutes.post("/meetings", async (c) => {
   return c.json({ id });
 });
 
-// 議事録を直す・確定する
+// 議事録を直す・確定する。AI が読むようになる確定と、確定後の修正は上司だけ
 accountRoutes.patch("/meetings/:id", async (c) => {
   const id = c.req.param("id");
+  const me = c.get("user");
   const b = await c.req.json<MeetingBody>();
-  const m = await c.env.DB.prepare("SELECT id, status FROM meetings WHERE id = ?").bind(id).first<{ id: string; status: string }>();
+  const m = await c.env.DB.prepare(`SELECT m.id, m.status FROM meetings m WHERE m.id = ? AND ${IN_COMPANY}`).bind(id, me.company_id).first<{ id: string; status: string }>();
   if (!m) return c.json({ error: "議事録が見つかりません" }, 404);
+  if (me.role !== "manager" && (b.confirm || m.status === "confirmed")) return c.json({ error: "確定は上司の操作です" }, 403);
   const stmts = [
     c.env.DB.prepare("UPDATE meetings SET participants = ?, summary = ?, decisions_json = ?, open_issues_json = ?, status = ? WHERE id = ?")
       .bind((b.participants ?? "").slice(0, 200), (b.summary ?? "").trim().slice(0, MAX_FIELD), JSON.stringify(clean(b.decisions)),
@@ -172,14 +181,18 @@ accountRoutes.patch("/meetings/:id", async (c) => {
 accountRoutes.post("/priorities/:id", async (c) => {
   const { status } = await c.req.json<{ status?: string }>();
   if (status !== "approved" && status !== "rejected") return c.json({ error: "承認か却下を選んでください" }, 400);
-  const r = await c.env.DB.prepare("UPDATE priorities SET status = ? WHERE id = ?").bind(status, c.req.param("id")).run();
+  const r = await c.env.DB.prepare(
+    "UPDATE priorities SET status = ? WHERE id = ? AND buyer_id IN (SELECT b.id FROM buyers b JOIN accounts a ON a.id = b.account_id WHERE a.company_id = ?)",
+  ).bind(status, c.req.param("id"), c.get("user").company_id).run();
   if (r.meta.changes === 0) return c.json({ error: "候補が見つかりません" }, 404);
   return c.json({ ok: true });
 });
 
 accountRoutes.post("/promises/:id", async (c) => {
   const { done } = await c.req.json<{ done?: boolean }>();
-  const r = await c.env.DB.prepare("UPDATE promises SET done = ? WHERE id = ?").bind(done ? 1 : 0, c.req.param("id")).run();
+  const r = await c.env.DB.prepare(
+    "UPDATE promises SET done = ? WHERE id = ? AND meeting_id IN (SELECT m.id FROM meetings m JOIN accounts a ON a.id = m.account_id WHERE a.company_id = ?)",
+  ).bind(done ? 1 : 0, c.req.param("id"), c.get("user").company_id).run();
   if (r.meta.changes === 0) return c.json({ error: "約束が見つかりません" }, 404);
   return c.json({ ok: true });
 });

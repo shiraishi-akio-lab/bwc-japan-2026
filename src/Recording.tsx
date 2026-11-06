@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { noticeExpired } from "./me";
 import sample from "../samples/transcript-sample.txt?raw";
 
 type Turn = { role: "rep" | "buyer"; content: string };
@@ -22,6 +23,7 @@ export function Recording({ buyers, onReady }: { buyers: BuyerOption[]; onReady:
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ transcript: text, buyerId: buyerId || undefined, heldOn }),
       });
+      noticeExpired(r.status);
       const data = (await r.json()) as { id?: string; turns?: Turn[]; meetingId?: string | null; error?: string };
       if (!r.ok || !data.id || !data.turns) throw new Error(data.error ?? `HTTP ${r.status}`);
       onReady(data.id, data.turns, data.meetingId ?? null);

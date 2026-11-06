@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useMe } from "./me";
 import { box, call, link, type View } from "./Accounts";
 
 type Label = { type: "meeting" | "priority" | "promise"; id: string };
@@ -66,6 +67,7 @@ function Document({ content, labels, setView }: { content: string; labels: Recor
 }
 
 export function HandoffPage({ id, setView, onError, onPractice }: { id: string; setView: (v: View) => void; onError: (m: string | null) => void; onPractice: (buyerId: string) => void }) {
+  const isManager = useMe().role === "manager";
   const [h, setH] = useState<Handoff | null>(null);
   useEffect(() => {
     let stop = false;
@@ -105,7 +107,7 @@ export function HandoffPage({ id, setView, onError, onPractice }: { id: string; 
         <>
           <div style={box}><Document content={h.content} labels={h.labels} setView={setView} /></div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {h.buyers.map((b) => <button key={b.id} onClick={() => onPractice(b.id)}>{b.name}さんを相手に練習する</button>)}
+            {!isManager && h.buyers.map((b) => <button key={b.id} onClick={() => onPractice(b.id)}>{b.name}さんを相手に練習する</button>)}
           </div>
         </>
       )}

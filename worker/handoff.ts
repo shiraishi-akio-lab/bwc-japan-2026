@@ -1,8 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
-import type { Account } from "./accounts";
+import { loadAccount, type Account } from "./accounts";
+import type { AppEnv } from "./types";
 
-type Bindings = { DB: D1Database; ANTHROPIC_API_KEY?: string; HANDOFF_AGENT_ID?: string; HANDOFF_ENV_ID?: string };
 type Label = { type: "meeting" | "priority" | "promise"; id: string };
 type Evaluation = { iteration: number; result: string; explanation: string };
 type Handoff = {
@@ -121,12 +121,14 @@ async function refresh(db: D1Database, apiKey: string, h: Handoff) {
   return { ...h, status, content, evaluations_json: JSON.stringify(evaluations), grading };
 }
 
-export const handoffRoutes = new Hono<{ Bindings: Bindings }>();
+export const handoffRoutes = new Hono<AppEnv>();
 
 handoffRoutes.get("/accounts/:id/handoffs", async (c) => {
+  const account = await loadAccount(c.env.DB, c.req.param("id"), c.get("user").company_id);
+  if (!account) return c.json({ error: "取引先が見つかりません" }, 404);
   const { results } = await c.env.DB.prepare(
     "SELECT id, from_rep, to_rep, status, created_at FROM handoffs WHERE account_id = ? ORDER BY created_at DESC",
-  ).bind(c.req.param("id")).all();
+  ).bind(account.id).all();
   return c.json(results);
 });
 
@@ -135,7 +137,7 @@ handoffRoutes.post("/accounts/:id/handoffs", async (c) => {
   if (!apiKey) return c.json({ error: "API キーが設定されていません" }, 503);
   if (!agent || !environmentId) return c.json({ error: "引き継ぎの準備ができていません（npm run handoff:setup）" }, 503);
   const id = c.req.param("id");
-  const account = await c.env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first<Account>();
+  const account = await loadAccount(c.env.DB, id, c.get("user").company_id);
   if (!account) return c.json({ error: "取引先が見つかりません" }, 404);
   const { toRep } = await c.req.json<{ toRep?: string }>();
   const to = (toRep ?? "").trim().slice(0, MAX_NAME);
@@ -168,7 +170,10 @@ handoffRoutes.post("/accounts/:id/handoffs", async (c) => {
 });
 
 handoffRoutes.get("/handoffs/:id", async (c) => {
-  const h = await c.env.DB.prepare("SELECT * FROM handoffs WHERE id = ?").bind(c.req.param("id")).first<Handoff>();
+  const h = await c.env.DB.prepare(
+    `SELECT h.id, h.account_id, h.from_rep, h.to_rep, h.session_id, h.labels_json, h.status, h.content, h.evaluations_json, h.created_at
+     FROM handoffs h JOIN accounts a ON a.id = h.account_id WHERE h.id = ? AND a.company_id = ?`,
+  ).bind(c.req.param("id"), c.get("user").company_id).first<Handoff>();
   if (!h) return c.json({ error: "引き継ぎ書が見つかりません" }, 404);
   const key = c.env.ANTHROPIC_API_KEY;
   const { grading = false, ...row } = h.status === "running" && key ? await refresh(c.env.DB, key, h) : { ...h, grading: false };

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { call } from "./Accounts";
 
 type Draft = {
   title: string;
@@ -25,7 +26,9 @@ const FIELDS: [keyof Draft, string][] = [
   ["nextJudgment", "次の判断"],
 ];
 
-// ベテランの語り → ケースカードの候補。承認は人が Obsidian で行う
+const MAX_STORY = 4000;
+
+// 取り込み：過去の商談内容・資料の文字 → ケースカードの候補。承認は「候補の承認」で上司が行う
 export function Organize({ axisName }: { axisName: (id: string) => string }) {
   const [story, setStory] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -36,13 +39,7 @@ export function Organize({ axisName }: { axisName: (id: string) => string }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch("/api/drafts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ story }),
-      });
-      const data = (await r.json()) as { draft?: Draft; error?: string };
-      if (!r.ok || !data.draft) throw new Error(data.error ?? `HTTP ${r.status}`);
+      const data = await call<{ draft: Draft }>("/api/drafts", "POST", { story });
       setDraft(data.draft);
     } catch (e) {
       setError((e as Error).message);
@@ -53,13 +50,13 @@ export function Organize({ axisName }: { axisName: (id: string) => string }) {
 
   return (
     <section>
-      <h2>ベテランの語りを残す</h2>
+      <h2>過去の商談・資料の取り込み</h2>
       <p style={{ color: "#555" }}>
-        通った商談・断られた商談を3分ほど語ってください（書き起こしを貼っても構いません）。整理する係がケースカードの候補にします。
-        候補はまだ根拠には使われません。ベテランが確かめて承認したものだけが、若手の練習の根拠になります。
+        過去の商談の内容、資料の文字、ベテランの語りの書き起こしを貼り付けてください（{MAX_STORY}字まで）。整理する係がケースカードの候補にします。
+        貼った文字は資料として読み、中に書かれた指示には従いません。候補はまだ根拠には使われません。「候補の承認」で承認したものだけが、若手の準備に使われます。
       </p>
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
-      <textarea value={story} onChange={(e) => setStory(e.target.value)} rows={8} style={{ width: "100%" }} placeholder="ベテランの語り" />
+      <textarea value={story} onChange={(e) => setStory(e.target.value)} rows={8} style={{ width: "100%" }} placeholder="過去の商談の内容・資料の文字" aria-label="取り込む文字" maxLength={MAX_STORY} />
       <button onClick={submit} disabled={busy || story.trim().length < 40}>カードの候補にする</button>
       {busy && <p>整理しています…</p>}
 

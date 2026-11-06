@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { InterestsPanel, ObservationsPanel, SeasonCalendar } from "./Counterpart";
 import { HandoffPage, HandoffStart } from "./Handoff";
+import { noticeExpired, useMe } from "./me";
 
 type AccountRow = { id: string; name: string; format: string; stores: number; owner_rep: string; buyer_count: number; last_met: string | null };
-type Account = { id: string; name: string; format: string; stores: number; profile: string; rules: string; owner_rep: string };
+type Account = { id: string; name: string; format: string; stores: number; profile: string; rules: string; owner_rep: string; site_url: string };
 type Buyer = { id: string; name: string; role: string; status: string };
 type Meeting = {
   id: string; held_on: string; kind: string; participants: string; summary: string; status: string;
@@ -27,6 +29,7 @@ export async function call<T>(path: string, method = "GET", body?: unknown): Pro
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  noticeExpired(r.status);
   const data = (await r.json()) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
   return data;
@@ -88,6 +91,7 @@ function AccountPage({ id, setView, onError }: Nav & { id: string }) {
       <p style={{ margin: "0 0 4px" }}>{account.format}・{account.stores}店舗／担当営業 {account.owner_rep}</p>
       <p style={{ margin: "0 0 4px" }}>{account.profile}</p>
       <p style={{ color: "#555" }}>決まりごと：{account.rules}</p>
+      <InterestsPanel accountId={account.id} siteUrl={account.site_url} onError={onError} />
       <h3>担当バイヤー</h3>
       {buyers.map((b) => (
         <div key={b.id} style={box}>
@@ -98,6 +102,7 @@ function AccountPage({ id, setView, onError }: Nav & { id: string }) {
       ))}
       <h3>商談の記録</h3>
       <MeetingList meetings={meetings} setView={setView} />
+      <SeasonCalendar onError={onError} />
       <HandoffStart accountId={account.id} ownerRep={account.owner_rep} setView={setView} onError={onError} />
     </>
   );
@@ -119,6 +124,7 @@ function MeetingList({ meetings, setView }: { meetings: Meeting[]; setView: (v: 
 }
 
 function BuyerPage({ id, setView, onError, onPractice }: Nav & { id: string; onPractice: (buyerId: string) => void }) {
+  const isManager = useMe().role === "manager";
   type Data = { buyer: Buyer; account: Account; priorities: Priority[]; promises: Promise_[] };
   const [data, setData] = useState<Data | null>(null);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -146,7 +152,7 @@ function BuyerPage({ id, setView, onError, onPractice }: Nav & { id: string; onP
       <h2>{buyer.name}<span style={{ marginLeft: 8, fontSize: 14, color: "#555" }}>{buyer.status}</span></h2>
       <p>{account.name}　{buyer.role}</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {buyer.status === "現役" && <button onClick={() => onPractice(buyer.id)}>この相手で練習する</button>}
+        {buyer.status === "現役" && !isManager && <button onClick={() => onPractice(buyer.id)}>この相手で練習する</button>}
         <button onClick={() => setView({ name: "newMeeting", buyerId: buyer.id })}>議事録を書く</button>
         <button onClick={() => setView({ name: "account", id: account.id })}>取引先に戻る</button>
       </div>
@@ -164,10 +170,12 @@ function BuyerPage({ id, setView, onError, onPractice }: Nav & { id: string; onP
         <div key={p.id} style={{ ...box, borderColor: "#f0c36d" }}>
           {p.text}
           <div style={{ fontSize: 14, color: "#555" }}>{p.noted_on}　根拠：{p.basis}</div>
-          <button onClick={() => judge(p.id, "approved")}>承認</button>{" "}
-          <button onClick={() => judge(p.id, "rejected")}>却下</button>
+          {isManager && <><button onClick={() => judge(p.id, "approved")}>承認</button>{" "}
+          <button onClick={() => judge(p.id, "rejected")}>却下</button></>}
         </div>
       ))}
+
+      <ObservationsPanel buyerId={buyer.id} onError={onError} />
 
       <h3>次回の約束</h3>
       {promises.length === 0 && <p style={{ color: "#777" }}>約束はありません。</p>}
@@ -185,6 +193,7 @@ function BuyerPage({ id, setView, onError, onPractice }: Nav & { id: string; onP
 }
 
 function MeetingPage({ id, setView, onError }: Nav & { id: string }) {
+  const isManager = useMe().role === "manager";
   const [m, setM] = useState<MeetingDetail | null>(null);
   const [form, setForm] = useState({ participants: "", summary: "", decisions: "", openIssues: "", promises: "" });
   const [saved, setSaved] = useState("");
@@ -246,14 +255,14 @@ function MeetingPage({ id, setView, onError }: Nav & { id: string }) {
       {field("openIssues", "残った論点", 3, "1行に1件")}
       {field("promises", "次回の約束", 3, "1行に1件。期日は「｜」のあとに")}
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => save(false)}>保存</button>
-        {m.status === "draft" && <button onClick={() => save(true)}>確定する</button>}
+        {(isManager || m.status === "draft") && <button onClick={() => save(false)}>保存</button>}
+        {m.status === "draft" && isManager && <button onClick={() => save(true)}>確定する</button>}
       </div>
       {saved && <p style={{ color: "#137333" }}>{saved}</p>}
       {m.priorities.some((p) => p.status === "pending") && (
         <p style={{ fontSize: 14 }}>
           この商談から「今大事にしていること」の候補が出ています。
-          <button style={link} onClick={() => setView({ name: "buyer", id: m.buyer_id })}>担当バイヤーのページで承認する</button>
+          <button style={link} onClick={() => setView({ name: "buyer", id: m.buyer_id })}>担当バイヤーのページを開く</button>
         </p>
       )}
     </>

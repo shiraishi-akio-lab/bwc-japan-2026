@@ -27,6 +27,7 @@ build/
 # wrangler local state / secrets
 .wrangler/
 .dev.vars
+.demo-users.local
 *.tsbuildinfo
 
 # Obsidian の個人の作業状態（見た目の設定 app.json だけ共有する）
