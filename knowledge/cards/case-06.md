@@ -6,7 +6,6 @@ scene: 粗利と条件
 axes:
   - feasibility
   - customer
-author: ベテラン（架空）＝Kaiの下書き。2026-11-03 オーナー確認済み
 ---
 
 # 粗利を聞かれて答えられなかった例

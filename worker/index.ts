@@ -123,7 +123,8 @@ app.post("/api/practice/:id/check", async (c) => {
     c.env.DB.prepare("INSERT INTO assessments (id, session_id, map_json, next_action_json) VALUES (?, ?, ?, ?)")
       .bind(crypto.randomUUID(), id, JSON.stringify(result), JSON.stringify(next)),
   ]);
-  return c.json({ ...result, next });
+  // 画面にはカードの番号でなく題名を出す
+  return c.json({ ...result, next, titles: Object.fromEntries(picked.map((p) => [p.id, p.title])) });
 });
 
 // 本番の商談のあと：話者分け済みの文字起こしを貼る → 練習と同じ「確かめる → 次の一行動」に流す

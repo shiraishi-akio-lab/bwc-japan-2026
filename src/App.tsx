@@ -27,6 +27,7 @@ export function App({ onLogout }: { onLogout: () => void }) {
   const [memo, setMemo] = useState({ facts: "", interpretation: "", nextCheck: "" });
   const [result, setResult] = useState<AxisResult[] | null>(null);
   const [next, setNext] = useState<NextAction | null>(null);
+  const [titles, setTitles] = useState<Record<string, string>>({});
   const [showMap, setShowMap] = useState(false);
   const [mode, setMode] = useState<"prep" | "practice" | "recording" | "accounts">("prep");
   const [view, setView] = useState<View>({ name: "list" });
@@ -108,7 +109,8 @@ export function App({ onLogout }: { onLogout: () => void }) {
 
   const checkIt = () =>
     run(async () => {
-      const r = await call<{ axes: AxisResult[]; next: NextAction }>(`/api/practice/${sessionId}/check`, "POST", memo);
+      const r = await call<{ axes: AxisResult[]; next: NextAction; titles: Record<string, string> }>(`/api/practice/${sessionId}/check`, "POST", memo);
+      setTitles(r.titles);
       setResult(r.axes);
       setNext(r.next);
       setShowMap(false);
@@ -237,7 +239,7 @@ export function App({ onLogout }: { onLogout: () => void }) {
                 <p>{W.practice.tryLine(next.tryLine)}</p>
                 <p className="muted">
                   {W.practice.why}：{next.reason}
-                  {next.caseId && <><br />{W.practice.example}：{next.caseId}</>}
+                  {titles[next.caseId] && <><br />{W.practice.example}：{titles[next.caseId]}</>}
                 </p>
                 <p className="small">
                   {W.practice.others(next.otherCount)}{" "}
@@ -268,7 +270,10 @@ export function App({ onLogout }: { onLogout: () => void }) {
                         {a.done.length > 0 && <strong>{W.practice.done}</strong>}
                         {a.done.map((d, i) => <p key={`d${i}`}>{d.text}<br /><small>{W.practice.quote}：「{d.quote}」</small></p>)}
                         {a.missing.length > 0 && <strong>{W.practice.missing}</strong>}
-                        {a.missing.map((m, i) => <p key={`m${i}`}>{m.text}{m.caseIds.length > 0 && <><br /><small>{W.practice.ground}：{m.caseIds.join("、")}</small></>}</p>)}
+                        {a.missing.map((m, i) => {
+                          const grounds = m.caseIds.map((id) => titles[id]).filter(Boolean);
+                          return <p key={`m${i}`}>{m.text}{grounds.length > 0 && <><br /><small>{W.practice.ground}：{grounds.join("、")}</small></>}</p>;
+                        })}
                       </>
                     )}
                   </div>

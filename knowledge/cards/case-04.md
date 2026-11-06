@@ -6,7 +6,6 @@ scene: 店頭の作業負担
 axes:
   - feasibility
   - dialogue
-author: ベテラン（架空）＝Kaiの下書き。2026-11-03 オーナー確認済み
 ---
 
 # 『店が回らない』と言われて引いたが、後で通った例

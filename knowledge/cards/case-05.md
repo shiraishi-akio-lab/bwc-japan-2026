@@ -6,7 +6,6 @@ scene: データの使い方
 axes:
   - evidence
   - dialogue
-author: ベテラン（架空）＝Kaiの下書き。2026-11-03 オーナー確認済み
 ---
 
 # POS の数字を『結論』として突きつけて反発された例

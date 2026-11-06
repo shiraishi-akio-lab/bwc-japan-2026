@@ -6,7 +6,6 @@ scene: 目標未達の結果報告
 axes:
   - dialogue
   - evidence
-author: 架空の過去の商談の記録（samples/past-meeting-sample.txt）→整理する係の下書き。2026-11-05 オーナー承認
 ---
 
 # 夏の島陳列が目標未達（前年比96%）だった結果報告で、次の企画より先に店別の原因を説明し直した商談

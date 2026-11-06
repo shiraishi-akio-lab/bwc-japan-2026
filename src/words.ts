@@ -94,7 +94,7 @@ export const W = {
     table: "数字を表で見る",
     weekCol: "週の始まり",
     chartLabel: (name: string, avg: number, yoy: number) => `${name}の直近8週の週販。平均${avg}本、前年比${yoy}%`,
-    revision: (date: string) => `前回の3月の棚割り改定の前後（${date}）`,
+    revision: (date: string) => `${date}の棚割り改定の前後`,
     revisionCols: (before: string, after: string) => ["対象", `改定前の4週（${before}）`, `改定後の4週（${after}）`],
     revisionNote: "1店あたりの週販の平均です。",
     source: "出どころ",

@@ -10,5 +10,5 @@ export const approvedCard = (cards: CaseCard[], id: string): CaseCard | null =>
 export const cardBody = (c: CaseCard) => ({
   id: c.id, title: c.title, scene: c.scene, situation: c.situation, hypothesis: c.hypothesis, evidence: c.evidence,
   proposal: c.proposal, constraints: c.constraints, result: c.result, nextJudgment: c.nextJudgment,
-  rejectedOptions: c.rejectedOptions, author: c.author,
+  rejectedOptions: c.rejectedOptions,
 });

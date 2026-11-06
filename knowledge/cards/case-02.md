@@ -6,7 +6,6 @@ scene: 初回提案
 axes:
   - customer
   - hypothesis
-author: ベテラン（架空）＝Kaiの下書き。2026-11-03 オーナー確認済み
 ---
 
 # 健康の売場づくりに乗せて通った提案

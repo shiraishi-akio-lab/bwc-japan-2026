@@ -10,7 +10,7 @@ type PrepRow = { id: string; meeting_on: string; stage: string; buyer_name: stri
 type Candidate = { id: string; name: string; maker: string; is_own: number; facings: number; weekly_units: number; yoy_pct: number };
 type CardBody = {
   id: string; title: string; situation: string; hypothesis: string; evidence: string; proposal: string; constraints: string;
-  result: string; nextJudgment: string; rejectedOptions: { option: string; reason: string }[]; author: string;
+  result: string; nextJudgment: string; rejectedOptions: { option: string; reason: string }[];
 };
 type Recap = {
   meeting: { held_on: string; kind: string; summary: string } | null;
@@ -508,7 +508,6 @@ function JudgmentStep({ prep, onError, go, auto, onSeen }: Nav & { auto: boolean
                 {data.card.rejectedOptions.map((r) => <p key={r.option}>{r.option}：{r.reason}</p>)}
               </div>
             )}
-            <small>{data.card.author}</small>
           </div>
         )}
       </Card>
@@ -519,7 +518,6 @@ function JudgmentStep({ prep, onError, go, auto, onSeen }: Nav & { auto: boolean
             <div key={m.id} className="box">
               <div className="row"><Approved /><strong>{m.title}</strong></div>
               <Facts rows={[[W.judgment.proposal, <span className="pre">{m.proposal}</span>]]} />
-              <small>{m.author}</small>
             </div>
           ))}
         </Card>
