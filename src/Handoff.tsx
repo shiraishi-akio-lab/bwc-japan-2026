@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { call } from "./api";
 import { useMe } from "./me";
-import { box, call, link, type View } from "./Accounts";
+import type { View } from "./Accounts";
+import { Button, Card, LinkButton, Notice, Title, Waiting } from "./ui";
+import { W } from "./words";
 
 type Label = { type: "meeting" | "priority" | "promise"; id: string };
 type Evaluation = { iteration: number; result: string; explanation: string };
@@ -11,7 +14,6 @@ type Handoff = HandoffRow & {
 };
 
 const POLL_MS = 5000;
-export const STATUS: Record<string, string> = { running: "作成中", passed: "合格", unpassed: "基準に届かず", failed: "失敗" };
 
 // 本文の [M1] を、議事録へのリンクにする
 function Inline({ text, labels, setView }: { text: string; labels: Record<string, Label>; setView: (v: View) => void }) {
@@ -24,8 +26,8 @@ function Inline({ text, labels, setView }: { text: string; labels: Record<string
         const label = p.match(/^\[([MPT]\d+)\]$/)?.[1];
         if (!label) return p;
         const target = labels[label];
-        if (target?.type === "meeting") return <button key={i} style={{ ...link, fontSize: 13 }} onClick={() => setView({ name: "meeting", id: target.id })}>{p}</button>;
-        return <small key={i} style={{ color: "#555" }}>{p}</small>;
+        if (target?.type === "meeting") return <LinkButton key={i} onClick={() => setView({ name: "meeting", id: target.id })}>{p}</LinkButton>;
+        return <small key={i}>{p}</small>;
       })}
     </>
   );
@@ -47,21 +49,21 @@ function Document({ content, labels, setView }: { content: string; labels: Recor
       }
       i--;
       out.push(
-        <div key={i} style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+        <div key={i} className="scroll-x">
+          <table>
             <tbody>
               {table.map((r, ri) => (
-                <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ border: "1px solid #ddd", padding: 6, fontWeight: ri === 0 ? 600 : 400 }}>{inline(c)}</td>)}</tr>
+                <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ fontWeight: ri === 0 ? 800 : 400 }}>{inline(c)}</td>)}</tr>
               ))}
             </tbody>
           </table>
         </div>,
       );
-    } else if (l.startsWith("# ")) out.push(<h3 key={i}>{inline(l.slice(2))}</h3>);
-    else if (l.startsWith("## ")) out.push(<h4 key={i} style={{ marginBottom: 4 }}>{inline(l.slice(3))}</h4>);
-    else if (l.startsWith("### ")) out.push(<h5 key={i} style={{ marginBottom: 4 }}>{inline(l.slice(4))}</h5>);
-    else if (/^([-*]|\d+\.)\s/.test(l)) out.push(<div key={i} style={{ margin: "4px 0 4px 12px" }}>{l.startsWith("-") || l.startsWith("*") ? "・" : `${l.match(/^\d+/)?.[0]}. `}{inline(l.replace(/^([-*]|\d+\.)\s/, ""))}</div>);
-    else out.push(<p key={i} style={{ margin: "4px 0" }}>{inline(l)}</p>);
+    } else if (l.startsWith("# ")) out.push(<h3 key={i} className="sub">{inline(l.slice(2))}</h3>);
+    else if (l.startsWith("## ")) out.push(<h4 key={i}>{inline(l.slice(3))}</h4>);
+    else if (l.startsWith("### ")) out.push(<h4 key={i}>{inline(l.slice(4))}</h4>);
+    else if (/^([-*]|\d+\.)\s/.test(l)) out.push(<div key={i} style={{ marginLeft: 12 }}>{l.startsWith("-") || l.startsWith("*") ? "・" : `${l.match(/^\d+/)?.[0]}. `}{inline(l.replace(/^([-*]|\d+\.)\s/, ""))}</div>);
+    else out.push(<p key={i}>{inline(l)}</p>);
   }
   return <>{out}</>;
 }
@@ -89,27 +91,31 @@ export function HandoffPage({ id, setView, onError, onPractice }: { id: string; 
   const round = h.evaluations.length + 1;
   return (
     <>
-      <h2>引き継ぎ書：{h.from_rep} → {h.to_rep}</h2>
-      <p style={{ color: "#555" }}>確定した議事録と承認済みの記録だけを読んで書きます。別の採点係が基準を見て、足りなければ差し戻します。</p>
-      <button style={link} onClick={() => setView({ name: "account", id: h.account_id })}>取引先に戻る</button>
-      <h3>採点の記録</h3>
-      {h.evaluations.map((e) => (
-        <details key={e.iteration} style={box} open={e.result === "needs_revision"}>
-          <summary>{e.iteration + 1}回目：{e.result === "satisfied" ? "合格" : e.result === "needs_revision" ? "差し戻し" : e.result}</summary>
-          <div style={{ whiteSpace: "pre-wrap", fontSize: 14, marginTop: 8 }}>{e.explanation}</div>
-        </details>
-      ))}
-      {h.status === "running" && <p role="status">{h.grading ? `${round}回目を採点しています…` : `${round}回目を書いています…`}（数分かかります）</p>}
-      {h.status === "failed" && <p role="alert" style={{ color: "#b00020" }}>作成できませんでした。もう一度試してください。</p>}
-      {h.status === "unpassed" && <p role="alert" style={{ color: "#b06000" }}>基準に届かないまま回数の上限になりました。読むときは差し戻しの理由を確かめてください。</p>}
-      {h.unknownLabels.length > 0 && <p role="alert" style={{ color: "#b00020" }}>記録に無い根拠が書かれています：{h.unknownLabels.join("、")}</p>}
+      <Card>
+        <Title size="big" as="h1">{W.handoff.title(h.from_rep, h.to_rep)}</Title>
+        <p className="lead">{W.handoff.lead}</p>
+        <div><LinkButton onClick={() => setView({ name: "account", id: h.account_id })}>{W.accounts.backAccount}</LinkButton></div>
+      </Card>
+      <Card>
+        <Title size="mid">{W.handoff.log}</Title>
+        {h.evaluations.map((e) => (
+          <details key={e.iteration} className="box" open={e.result === "needs_revision"}>
+            <summary>{W.handoff.round(e.iteration + 1, e.result)}</summary>
+            <div className="pre small">{e.explanation}</div>
+          </details>
+        ))}
+        {h.status === "running" && <Waiting>{h.grading ? W.handoff.checking(round) : W.handoff.writing(round)}</Waiting>}
+        {h.status === "failed" && <Notice>{W.handoff.failed}</Notice>}
+        {h.status === "unpassed" && <Notice>{W.handoff.unpassed}</Notice>}
+        {h.unknownLabels.length > 0 && <Notice>{W.handoff.unknown(h.unknownLabels.join("、"))}</Notice>}
+      </Card>
       {h.content && (
-        <>
-          <div style={box}><Document content={h.content} labels={h.labels} setView={setView} /></div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {!isManager && h.buyers.map((b) => <button key={b.id} onClick={() => onPractice(b.id)}>{b.name}さんを相手に練習する</button>)}
+        <Card>
+          <Document content={h.content} labels={h.labels} setView={setView} />
+          <div className="row">
+            {!isManager && h.buyers.map((b) => <Button key={b.id} onClick={() => onPractice(b.id)}>{W.handoff.practice(b.name)}</Button>)}
           </div>
-        </>
+        </Card>
       )}
     </>
   );
@@ -134,15 +140,17 @@ export function HandoffStart({ accountId, ownerRep, setView, onError }: { accoun
   };
   return (
     <>
-      <h3>担当の引き継ぎ</h3>
-      <p style={{ color: "#555", marginTop: 0 }}>{ownerRep}さんの記録から、後任の人に向けた引き継ぎ書を作ります。</p>
-      <label>引き継ぐ人 <input value={toRep} onChange={(e) => setToRep(e.target.value)} maxLength={40} /></label>{" "}
-      <button onClick={start} disabled={busy || !toRep.trim()}>引き継ぎ書を作る</button>
+      <Title size="mid">{W.handoff.start}</Title>
+      <p className="muted">{W.handoff.startLead(ownerRep)}</p>
+      <div className="row-end">
+        <label className="field">{W.handoff.to}<input value={toRep} onChange={(e) => setToRep(e.target.value)} maxLength={40} /></label>
+        <Button onClick={start} disabled={busy || !toRep.trim()}>{W.handoff.make}</Button>
+      </div>
       {rows.map((r) => (
-        <div key={r.id} style={box}>
-          <button style={link} onClick={() => setView({ name: "handoff", id: r.id })}>{r.from_rep} → {r.to_rep}</button>
-          <span style={{ marginLeft: 8, fontSize: 13, color: "#555" }}>{STATUS[r.status]}・{r.created_at.slice(0, 10)}</span>
-        </div>
+        <button key={r.id} type="button" className="pick" onClick={() => setView({ name: "handoff", id: r.id })}>
+          <strong>{r.from_rep} → {r.to_rep}</strong>
+          <span className="small">{W.handoff.status[r.status]}・{r.created_at.slice(0, 10)}</span>
+        </button>
       ))}
     </>
   );

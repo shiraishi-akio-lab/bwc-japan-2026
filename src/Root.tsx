@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { App } from "./App";
 import { Manager } from "./Manager";
 import { MeContext, SESSION_EXPIRED, type Me } from "./me";
-
-const page = { fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "32px auto", padding: "0 16px", lineHeight: 1.6 } as const;
+import { Button, ErrorNotice, Logo } from "./ui";
+import { W } from "./words";
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -33,21 +33,23 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
   };
 
   return (
-    <main style={page}>
-      <h1 style={{ marginBottom: 4 }}>営業GYM</h1>
-      <p style={{ marginTop: 0, color: "#555" }}>ログインしてください。（すべて架空のデータです）</p>
-      {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
-      <form onSubmit={submit} style={{ maxWidth: 360 }}>
-        <label style={{ display: "block", marginBottom: 8 }}>
-          メールアドレス
-          <input type="email" name="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} style={{ display: "block", width: "100%" }} />
-        </label>
-        <label style={{ display: "block", marginBottom: 8 }}>
-          パスワード
-          <input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} style={{ display: "block", width: "100%" }} />
-        </label>
-        <button type="submit" disabled={busy}>ログイン</button>
-      </form>
+    <main className="login">
+      <div className="login-card card">
+        <h1><Logo className="login-logo" /></h1>
+        <p className="login-note">{W.login.lead}（{W.app.fictional}）</p>
+        <ErrorNotice message={error} />
+        <form onSubmit={submit} className="stack">
+          <label className="field">
+            {W.login.email}
+            <input type="email" name="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="field">
+            {W.login.password}
+            <input type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <Button type="submit" disabled={busy}>{W.login.submit}</Button>
+        </form>
+      </div>
     </main>
   );
 }
@@ -76,11 +78,7 @@ export function Root() {
   if (me === null) return <Login onDone={setMe} />;
   return (
     <MeContext.Provider value={me}>
-      <div style={{ ...page, margin: "8px auto -24px", fontSize: 14, color: "#555", display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span>{me.displayName}（{me.role === "manager" ? "上司" : "本人"}）</span>
-        <button onClick={logout}>ログアウト</button>
-      </div>
-      {me.role === "manager" ? <Manager /> : <App />}
+      {me.role === "manager" ? <Manager onLogout={logout} /> : <App onLogout={logout} />}
     </MeContext.Provider>
   );
 }

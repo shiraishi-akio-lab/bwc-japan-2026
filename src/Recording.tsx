@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { noticeExpired } from "./me";
+import { Button, Card, ErrorNotice, Title, Waiting, Why, honor, personName, type Turn } from "./ui";
+import { W } from "./words";
 import sample from "../samples/transcript-sample.txt?raw";
-
-type Turn = { role: "rep" | "buyer"; content: string };
 
 // 本番の商談のあと：録音アプリで話者分けした文字起こしを貼る。録音そのものは受け取らない
 type BuyerOption = { id: string; name: string; account_name: string };
@@ -34,30 +34,29 @@ export function Recording({ buyers, onReady }: { buyers: BuyerOption[]; onReady:
     }
   };
 
+  const enough = text.trim().length >= 40;
   return (
-    <section>
-      <h2>本番の商談を振り返る</h2>
-      <p style={{ color: "#555" }}>
-        録音アプリ（例：Klang）で話者分けした文字起こしを貼ってください。練習と同じように、確かめて、次に鍛える一行動を1つ出します。
-        録音そのものは受け取りません。相手の方の同意を得た録音だけを使ってください。
-      </p>
-      {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-        <label>
-          相手{" "}
+    <Card>
+      <Title size="big" as="h1">{W.recording.title}</Title>
+      <p className="lead">{W.recording.lead}</p>
+      <ErrorNotice message={error} />
+      <div className="row-end">
+        <label className="field">
+          {W.recording.partner}
           <select value={buyerId} onChange={(e) => setBuyerId(e.target.value)}>
-            <option value="">選ばない（議事録は残さない）</option>
-            {buyers.map((b) => <option key={b.id} value={b.id}>{b.account_name}　{b.name}</option>)}
+            <option value="">{W.recording.noPartner}</option>
+            {buyers.map((b) => <option key={b.id} value={b.id}>{personName(b.account_name)} {honor(personName(b.name))}</option>)}
           </select>
         </label>
-        <label>商談の日 <input type="date" value={heldOn} onChange={(e) => setHeldOn(e.target.value)} /></label>
+        <label className="field">{W.recording.date}<input type="date" value={heldOn} onChange={(e) => setHeldOn(e.target.value)} /></label>
       </div>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={12} style={{ width: "100%" }} placeholder="話者分けした文字起こし" />
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={submit} disabled={busy || text.trim().length < 40}>読み込む</button>
-        <button onClick={() => setText(sample)} disabled={busy}>見本（架空）を入れる</button>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={12} placeholder={W.recording.text} aria-label={W.recording.text} />
+      <div className="row">
+        <Button onClick={submit} disabled={busy || !enough}>{W.recording.load}</Button>
+        <Button ghost onClick={() => setText(sample)} disabled={busy}>{W.recording.sample}</Button>
+        {!enough && <Why>{W.recording.why}</Why>}
       </div>
-      {busy && <p>発言を若手とバイヤーに分けて、議事録の下書きを作っています…</p>}
-    </section>
+      {busy && <Waiting>{W.recording.busy}</Waiting>}
+    </Card>
   );
 }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { box, call } from "./Accounts";
+import { call } from "./api";
 import { useMe } from "./me";
+import { Approved, Button, Card, Empty, Facts, Pending, Sub, Tag, Title, Waiting } from "./ui";
+import { W } from "./words";
 
 // 相手の棚：企業の関心・担当者の傾向・ことカレンダー
 type Interest = {
@@ -14,21 +16,16 @@ type Brief = { interests: Interest[]; observations: Observation[]; events: Dated
 type Read = { pages: { url: string; title: string; date: string }[]; added: number };
 type OnError = (m: string | null) => void;
 
-const small = { fontSize: 14, color: "#555" } as const;
-
 // 出どころと日付はいつも一緒に見せる
-function Source({ i }: { i: Interest }) {
-  return (
-    <div style={small}>
-      {i.published_on ? `掲載 ${i.published_on}` : "掲載日は読み取れず"}　取得 {i.fetched_on}　
-      <a href={i.source_url} target="_blank" rel="noreferrer">{i.source_title}</a>
-      <br />根拠：{i.basis}
-    </div>
-  );
-}
+const sourceRows = (i: Interest): [string, React.ReactNode][] => [
+  [W.brief.source, <a href={i.source_url} target="_blank" rel="noreferrer">{i.source_title || i.source_url}</a>],
+  [W.brief.published, i.published_on || W.brief.noPublished],
+  [W.brief.fetched, i.fetched_on],
+  [W.brief.basis, i.basis],
+];
 
-// 取引先の画面：公開情報を読み、候補を人が承認する。未承認は AI にも準備室にも渡らない
-export function InterestsPanel({ accountId, siteUrl, onError }: { accountId: string; siteUrl: string; onError: OnError }) {
+// 取引先の画面と候補の承認：公開情報を読み、候補を人が承認する。未承認は AI にも準備室にも渡らない
+export function InterestsPanel({ accountId, siteUrl, onError, title = W.interests.title, lead = W.interests.lead, empty = W.state.noData }: { accountId: string; siteUrl: string; onError: OnError; title?: string; lead?: string; empty?: string }) {
   const isManager = useMe().role === "manager";
   const [rows, setRows] = useState<Interest[]>([]);
   const [url, setUrl] = useState(siteUrl);
@@ -58,40 +55,40 @@ export function InterestsPanel({ accountId, siteUrl, onError }: { accountId: str
 
   return (
     <>
-      <h3>この会社の関心</h3>
-      <p style={small}>ニュースリリース・決算情報・新しい取り組みのページを読み、関心の候補を出します。上司が承認したものだけを、準備室と AI が読みます。</p>
-      {isManager && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" aria-label="読む会社のURL" style={{ flex: "1 1 240px", minWidth: 0 }} />
-        <button onClick={start} disabled={busy || !url.trim()}>公開情報から読む</button>
-      </div>}
-      {busy && <p style={small}>読んでいます…</p>}
-      {read && <p style={small}>{read.pages.length}ページを読み、候補を{read.added}件足しました。{read.added === 0 && "（読んだことのあるページは読み直しません）"}</p>}
-      {approved.map((i) => (
-        <div key={i.id} style={box}>
-          <strong>{i.text}</strong>
-          <Source i={i} />
-        </div>
-      ))}
-      {pending.length > 0 && <h4>候補（承認すると AI が読みます）</h4>}
+      <Title size="mid">{title}</Title>
+      {lead && <p className="muted">{lead}</p>}
+      {rows.length === 0 && <Empty>{empty}</Empty>}
+      {pending.length > 0 && <Sub>{W.interests.candidates}</Sub>}
       {pending.map((i) => (
-        <div key={i.id} style={{ ...box, borderColor: "#f0c36d" }}>
-          {i.text}
-          <Source i={i} />
-          <button onClick={() => judge(i.id, "approved")}>承認</button>{" "}
-          <button onClick={() => judge(i.id, "rejected")}>見送り</button>
+        <div key={i.id} className="box">
+          <div className="row"><Pending /><strong>{i.text}</strong></div>
+          <Facts two rows={sourceRows(i)} />
+          <div className="row">
+            <Button small onClick={() => judge(i.id, "approved")}>{W.interests.approve}</Button>
+            <Button small ghost onClick={() => judge(i.id, "rejected")}>{W.interests.reject}</Button>
+          </div>
         </div>
       ))}
+      {approved.map((i) => (
+        <div key={i.id} className="box">
+          <div className="row"><Approved /><strong>{i.text}</strong></div>
+          <Facts two rows={sourceRows(i)} />
+        </div>
+      ))}
+      {isManager && (
+        <>
+          <Title size="mid">{W.interests.readTitle}</Title>
+          <div className="say-input">
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" aria-label={W.interests.urlLabel} />
+            <Button onClick={start} disabled={busy || !url.trim()}>{W.interests.read}</Button>
+          </div>
+        </>
+      )}
+      {busy && <Waiting>{W.state.reading}</Waiting>}
+      {read && <p className="small" role="status">{W.interests.done(read.pages.length, read.added)}</p>}
     </>
   );
 }
-
-const ObservationItem = ({ o }: { o: Observation }) => (
-  <div style={box}>
-    {o.tendency}
-    <div style={small}>{o.held_on}　根拠の発言：{o.basis}</div>
-    <div style={small}>キーワード：{o.keywords.join("・")}</div>
-  </div>
-);
 
 // 担当バイヤーの画面：読むだけ。確定した商談で観察されたことだけが出る
 export function ObservationsPanel({ buyerId, onError }: { buyerId: string; onError: OnError }) {
@@ -100,15 +97,18 @@ export function ObservationsPanel({ buyerId, onError }: { buyerId: string; onErr
     call<Observation[]>(`/api/buyers/${buyerId}/observations`).then(setRows).catch((e: Error) => onError(e.message));
   }, [buyerId, onError]);
   return (
-    <>
-      <h3>商談で観察された傾向</h3>
-      {rows.length === 0 && <p style={{ color: "#777" }}>まだ記録はありません。</p>}
-      {rows.map((o) => <ObservationItem key={o.id} o={o} />)}
-    </>
+    <Card>
+      <Title size="mid">{W.brief.tendency}</Title>
+      {rows.length === 0 && <Empty>{W.state.noData}</Empty>}
+      {rows.map((o) => (
+        <div key={o.id} className="box">
+          <strong>{o.tendency}</strong>
+          <Facts rows={[[W.brief.date, o.held_on], [W.brief.keyword, o.keywords.join("・")], [W.brief.saidBasis, o.basis]]} />
+        </div>
+      ))}
+    </Card>
   );
 }
-
-const cell = { padding: "4px 8px", borderBottom: "1px solid #ddd", textAlign: "left", verticalAlign: "top" } as const;
 
 // ことカレンダー：読むだけ
 export function SeasonCalendar({ onError }: { onError: OnError }) {
@@ -117,59 +117,72 @@ export function SeasonCalendar({ onError }: { onError: OnError }) {
     call<SeasonEvent[]>("/api/season-events").then(setRows).catch((e: Error) => onError(e.message));
   }, [onError]);
   return (
-    <details style={{ margin: "16px 0" }}>
-      <summary>ことカレンダー（1年分）</summary>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 640, fontSize: 14 }}>
-          <thead>
-            <tr>{["行事・投入時期", "締切の目安", "店の動き", "提案内容", "自社の過去の実績"].map((h) => <th key={h} style={cell}>{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {rows.map((e) => (
-              <tr key={e.id}>
-                <td style={cell}>{e.name}（{e.month}/{e.day}ごろ）</td>
-                <td style={cell}>{e.deadline_month}/{e.deadline_day}</td>
-                <td style={cell}>{e.store_action}</td>
-                <td style={cell}>{e.proposal}</td>
-                <td style={cell}>{e.own_result}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
+    <Card>
+      <details>
+        <summary>{W.accounts.calendar}</summary>
+        <div className="scroll-x">
+          <table style={{ minWidth: 640 }}>
+            <thead>
+              <tr>{W.accounts.calendarCols.map((h) => <th key={h}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((e) => (
+                <tr key={e.id}>
+                  <td>{e.name}（{e.month}/{e.day}ごろ）</td>
+                  <td>{e.deadline_month}/{e.deadline_day}</td>
+                  <td>{e.store_action}</td>
+                  <td>{e.proposal}</td>
+                  <td>{e.own_result}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </Card>
   );
 }
 
 // 準備室の1枚。当てはまるものだけをサーバーが絞って返す。written が変わると絞り直す
 export function PrepBrief({ prepId, written, onError }: { prepId: string; written: string; onError: OnError }) {
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    call<Brief>(`/api/preps/${prepId}/brief`).then(setBrief).catch((e: Error) => onError(e.message));
+    call<Brief>(`/api/preps/${prepId}/brief`).then(setBrief).catch((e: Error) => { setFailed(true); onError(e.message); });
   }, [prepId, written, onError]);
-  if (!brief) return null;
+  if (failed) return null;
+  if (!brief) return <Waiting>{W.state.reading}</Waiting>;
   return (
     <>
-      <h2>相手と時期の下調べ</h2>
-      <h3>相手の関心（公開情報から、人が承認したもの）</h3>
-      {brief.interests.length === 0 && <p style={{ color: "#777" }}>承認された関心はまだありません。上司が公開情報を読んで承認すると、ここに出ます。</p>}
+      {brief.interests.length === 0 && (
+        <Card>
+          <div><Tag kind="soft">{W.brief.interest}</Tag></div>
+          <Empty>{W.brief.noInterest}</Empty>
+        </Card>
+      )}
       {brief.interests.map((i) => (
-        <div key={i.id} style={box}>
-          <strong>{i.text}</strong>
-          <Source i={i} />
-        </div>
+        <Card key={i.id}>
+          <div className="row"><Tag kind="soft">{W.brief.interest}</Tag><Approved /></div>
+          <h3 className="item">{i.text}</h3>
+          <Facts two rows={sourceRows(i)} />
+        </Card>
       ))}
-      {brief.observations.length > 0 && <h3>商談で観察された傾向</h3>}
-      {brief.observations.map((o) => <ObservationItem key={o.id} o={o} />)}
-      {brief.events.length > 0 && <h3>この商談から間に合う行事</h3>}
+      {brief.observations.map((o) => (
+        <Card key={o.id}>
+          <div className="row"><Tag kind="soft">{W.brief.tendency}</Tag><Tag kind="line">{W.tag.fromConfirmed}</Tag></div>
+          <h3 className="item">「{o.tendency}」</h3>
+          <Facts rows={[[W.brief.keyword, o.keywords.join("・")], [W.brief.date, o.held_on], [W.brief.saidBasis, o.basis]]} />
+        </Card>
+      ))}
       {brief.events.map((e) => (
-        <div key={e.id} style={box}>
-          <strong>{e.name}</strong>（{e.event_on}ごろ）
-          <div style={small}>提案の締切の目安 {e.deadline_on}</div>
-          <div style={{ fontSize: 14 }}>店の動き：{e.store_action}</div>
-          <div style={{ fontSize: 14 }}>提案内容：{e.proposal}</div>
-          <div style={{ fontSize: 14 }}>自社の過去の実績：{e.own_result}</div>
-        </div>
+        <Card key={e.id}>
+          <div><Tag kind="soft">{W.brief.event}</Tag></div>
+          <h3 className="item">{e.name}</h3>
+          <Facts rows={[
+            [W.brief.eventOn, e.event_on], [W.brief.store, e.store_action], [W.brief.ownResult, e.own_result],
+            [W.brief.deadline, e.deadline_on], [W.brief.proposal, e.proposal],
+          ]} />
+        </Card>
       ))}
     </>
   );

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { call } from "./api";
 import { InterestsPanel, ObservationsPanel, SeasonCalendar } from "./Counterpart";
 import { HandoffPage, HandoffStart } from "./Handoff";
-import { noticeExpired, useMe } from "./me";
+import { useMe } from "./me";
+import { Approved, Button, Card, Empty, ErrorNotice, Facts, LinkButton, Pending, Saved, Sub, Tag, Title, Why } from "./ui";
+import { W } from "./words";
 
 type AccountRow = { id: string; name: string; format: string; stores: number; owner_rep: string; buyer_count: number; last_met: string | null };
 type Account = { id: string; name: string; format: string; stores: number; profile: string; rules: string; owner_rep: string; site_url: string };
@@ -23,35 +26,21 @@ export type View =
   | { name: "newMeeting"; buyerId: string }
   | { name: "handoff"; id: string };
 
-export async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const r = await fetch(path, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  noticeExpired(r.status);
-  const data = (await r.json()) as T & { error?: string };
-  if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`);
-  return data;
-}
-
-export const box = { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" } as const;
-export const link = { background: "none", border: "none", color: "#1a73e8", padding: 0, cursor: "pointer", font: "inherit", textAlign: "left" } as const;
 const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
 
 export function Accounts({ view, setView, onPractice }: { view: View; setView: (v: View) => void; onPractice: (buyerId: string) => void }) {
   const [error, setError] = useState<string | null>(null);
   return (
-    <section>
-      {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
-      {view.name !== "list" && <button style={link} onClick={() => setView({ name: "list" })}>← 取引先の一覧</button>}
+    <>
+      <ErrorNotice message={error} />
+      {view.name !== "list" && <div><LinkButton onClick={() => setView({ name: "list" })}>{W.accounts.back}</LinkButton></div>}
       {view.name === "list" && <List setView={setView} onError={setError} />}
       {view.name === "account" && <AccountPage id={view.id} setView={setView} onError={setError} />}
       {view.name === "buyer" && <BuyerPage id={view.id} setView={setView} onError={setError} onPractice={onPractice} />}
       {view.name === "meeting" && <MeetingPage id={view.id} setView={setView} onError={setError} />}
       {view.name === "newMeeting" && <NewMeeting buyerId={view.buyerId} setView={setView} onError={setError} />}
       {view.name === "handoff" && <HandoffPage id={view.id} setView={setView} onError={setError} onPractice={onPractice} />}
-    </section>
+    </>
   );
 }
 
@@ -63,18 +52,19 @@ function List({ setView, onError }: Nav) {
     call<AccountRow[]>("/api/accounts").then(setRows).catch((e: Error) => onError(e.message));
   }, [onError]);
   return (
-    <>
-      <h2>取引先</h2>
-      <p style={{ color: "#555" }}>相手のことを、取引先ごとに積み上げます。AI が読むのは、人が確定した記録だけです。（すべて架空）</p>
-      {rows.map((a) => (
-        <div key={a.id} style={box}>
-          <button style={{ ...link, fontWeight: 600 }} onClick={() => setView({ name: "account", id: a.id })}>{a.name}</button>
-          <div style={{ fontSize: 14, color: "#555" }}>
-            {a.format}・{a.stores}店舗／担当営業 {a.owner_rep}／最後の商談 {a.last_met ?? "なし"}
-          </div>
-        </div>
-      ))}
-    </>
+    <Card>
+      <Title size="big" as="h1">{W.accounts.list}</Title>
+      <p className="lead">{W.accounts.lead}</p>
+      <div className="grid-3">
+        {rows.map((a) => (
+          <button key={a.id} type="button" className="pick" onClick={() => setView({ name: "account", id: a.id })}>
+            <span className="pick-name">{a.name}</span>
+            <span className="small">{a.format}・{a.stores}店舗</span>
+            <span className="small">{W.accounts.ownerRep} {a.owner_rep}／{W.accounts.lastMet} {a.last_met ?? W.accounts.none}</span>
+          </button>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -87,39 +77,49 @@ function AccountPage({ id, setView, onError }: Nav & { id: string }) {
   const { account, buyers, meetings } = data;
   return (
     <>
-      <h2>{account.name}</h2>
-      <p style={{ margin: "0 0 4px" }}>{account.format}・{account.stores}店舗／担当営業 {account.owner_rep}</p>
-      <p style={{ margin: "0 0 4px" }}>{account.profile}</p>
-      <p style={{ color: "#555" }}>決まりごと：{account.rules}</p>
-      <InterestsPanel accountId={account.id} siteUrl={account.site_url} onError={onError} />
-      <h3>担当バイヤー</h3>
-      {buyers.map((b) => (
-        <div key={b.id} style={box}>
-          <button style={{ ...link, fontWeight: 600 }} onClick={() => setView({ name: "buyer", id: b.id })}>{b.name}</button>
-          <span style={{ marginLeft: 8, fontSize: 13, color: b.status === "現役" ? "#137333" : "#777" }}>{b.status}</span>
-          <div style={{ fontSize: 14, color: "#555" }}>{b.role}</div>
+      <Card>
+        <Title size="big" as="h1">{account.name}</Title>
+        <p className="muted">{account.format}・{account.stores}店舗／{W.accounts.ownerRep} {account.owner_rep}</p>
+        <p>{account.profile}</p>
+        <p className="muted">{W.accounts.rules}：{account.rules}</p>
+      </Card>
+      <Card><InterestsPanel accountId={account.id} siteUrl={account.site_url} onError={onError} /></Card>
+      <Card>
+        <Title size="mid">{W.accounts.buyers}</Title>
+        <div className="grid-3">
+          {buyers.map((b) => (
+            <button key={b.id} type="button" className="pick" onClick={() => setView({ name: "buyer", id: b.id })}>
+              <span className="pick-name">{b.name}</span>
+              <span className="small">{b.role}</span>
+              <Tag kind={b.status === "現役" ? "soft" : "wait"}>{b.status}</Tag>
+            </button>
+          ))}
         </div>
-      ))}
-      <h3>商談の記録</h3>
-      <MeetingList meetings={meetings} setView={setView} />
+      </Card>
+      <Card>
+        <Title size="mid">{W.accounts.meetings}</Title>
+        <MeetingList meetings={meetings} setView={setView} />
+      </Card>
       <SeasonCalendar onError={onError} />
-      <HandoffStart accountId={account.id} ownerRep={account.owner_rep} setView={setView} onError={onError} />
+      <Card><HandoffStart accountId={account.id} ownerRep={account.owner_rep} setView={setView} onError={onError} /></Card>
     </>
   );
 }
 
 function MeetingList({ meetings, setView }: { meetings: Meeting[]; setView: (v: View) => void }) {
-  if (meetings.length === 0) return <p style={{ color: "#777" }}>まだ記録はありません。</p>;
+  if (meetings.length === 0) return <Empty>{W.state.noData}</Empty>;
   return (
-    <>
+    <div className="stack">
       {meetings.map((m) => (
-        <div key={m.id} style={box}>
-          <button style={link} onClick={() => setView({ name: "meeting", id: m.id })}>{m.held_on} {m.kind}（{m.buyer_name}）</button>
-          {m.status === "draft" && <span style={{ marginLeft: 8, fontSize: 13, color: "#b06000" }}>下書き</span>}
-          <div style={{ fontSize: 14 }}>{m.summary}</div>
-        </div>
+        <button key={m.id} type="button" className="pick" onClick={() => setView({ name: "meeting", id: m.id })}>
+          <span className="row">
+            <strong>{m.held_on} {m.kind}（{m.buyer_name}）</strong>
+            <Tag kind={m.status === "draft" ? "wait" : "line"}>{m.status === "draft" ? W.tag.draft : W.tag.confirmed}</Tag>
+          </span>
+          <span>{m.summary}</span>
+        </button>
       ))}
-    </>
+    </div>
   );
 }
 
@@ -149,45 +149,63 @@ function BuyerPage({ id, setView, onError, onPractice }: Nav & { id: string; onP
   const pending = priorities.filter((p) => p.status === "pending");
   return (
     <>
-      <h2>{buyer.name}<span style={{ marginLeft: 8, fontSize: 14, color: "#555" }}>{buyer.status}</span></h2>
-      <p>{account.name}　{buyer.role}</p>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {buyer.status === "現役" && !isManager && <button onClick={() => onPractice(buyer.id)}>この相手で練習する</button>}
-        <button onClick={() => setView({ name: "newMeeting", buyerId: buyer.id })}>議事録を書く</button>
-        <button onClick={() => setView({ name: "account", id: account.id })}>取引先に戻る</button>
-      </div>
+      <Card>
+        <div className="row">
+          <Title size="big" as="h1">{buyer.name}</Title>
+          <Tag kind={buyer.status === "現役" ? "soft" : "wait"}>{buyer.status}</Tag>
+        </div>
+        <p className="muted">{account.name}　{buyer.role}</p>
+        <div className="row">
+          {buyer.status === "現役" && !isManager && <Button onClick={() => onPractice(buyer.id)}>{W.accounts.practice}</Button>}
+          <Button ghost onClick={() => setView({ name: "newMeeting", buyerId: buyer.id })}>{W.accounts.writeMinutes}</Button>
+          <Button ghost onClick={() => setView({ name: "account", id: account.id })}>{W.accounts.backAccount}</Button>
+        </div>
+      </Card>
 
-      <h3>今大事にしていること</h3>
-      {approved.length === 0 && <p style={{ color: "#777" }}>まだ記録はありません。</p>}
-      {approved.map((p) => (
-        <div key={p.id} style={box}>
-          <strong>{p.text}</strong>
-          <div style={{ fontSize: 14, color: "#555" }}>{p.noted_on}　根拠：{p.basis}</div>
-        </div>
-      ))}
-      {pending.length > 0 && <h4>候補（承認すると AI が読みます）</h4>}
-      {pending.map((p) => (
-        <div key={p.id} style={{ ...box, borderColor: "#f0c36d" }}>
-          {p.text}
-          <div style={{ fontSize: 14, color: "#555" }}>{p.noted_on}　根拠：{p.basis}</div>
-          {isManager && <><button onClick={() => judge(p.id, "approved")}>承認</button>{" "}
-          <button onClick={() => judge(p.id, "rejected")}>却下</button></>}
-        </div>
-      ))}
+      <Card>
+        <Title size="mid">{W.accounts.priorities}</Title>
+        {approved.length === 0 && <Empty>{W.state.noData}</Empty>}
+        {approved.map((p) => (
+          <div key={p.id} className="box">
+            <div className="row"><Approved /><strong>{p.text}</strong></div>
+            <small>{p.noted_on}　{W.accounts.basis}：{p.basis}</small>
+          </div>
+        ))}
+        {pending.length > 0 && <Sub>{W.accounts.candidates}</Sub>}
+        {pending.map((p) => (
+          <div key={p.id} className="box">
+            <div className="row"><Pending /><strong>{p.text}</strong></div>
+            <small>{p.noted_on}　{W.accounts.basis}：{p.basis}</small>
+            {isManager && (
+              <div className="row">
+                <Button small onClick={() => judge(p.id, "approved")}>{W.accounts.approve}</Button>
+                <Button small ghost onClick={() => judge(p.id, "rejected")}>{W.accounts.reject}</Button>
+              </div>
+            )}
+          </div>
+        ))}
+      </Card>
 
       <ObservationsPanel buyerId={buyer.id} onError={onError} />
 
-      <h3>次回の約束</h3>
-      {promises.length === 0 && <p style={{ color: "#777" }}>約束はありません。</p>}
-      {promises.map((p) => (
-        <label key={p.id} style={{ display: "block", margin: "4px 0" }}>
-          <input type="checkbox" checked={!!p.done} onChange={() => toggle(p)} /> {p.text}{p.due && `（${p.due}まで）`}
-          {p.meeting_status === "draft" && <small style={{ color: "#b06000" }}>（議事録が下書き）</small>}
-        </label>
-      ))}
+      <Card>
+        <Title size="mid">{W.accounts.promises}</Title>
+        {promises.length === 0 && <Empty>{W.accounts.noPromises}</Empty>}
+        {promises.map((p) => (
+          <label key={p.id} className="check">
+            <input type="checkbox" checked={!!p.done} onChange={() => toggle(p)} />
+            <span>
+              {p.text}{p.due && `（${p.due}まで）`}
+              {p.meeting_status === "draft" && <small>{W.accounts.meetingDraftNote}</small>}
+            </span>
+          </label>
+        ))}
+      </Card>
 
-      <h3>議事録</h3>
-      <MeetingList meetings={meetings} setView={setView} />
+      <Card>
+        <Title size="mid">{W.accounts.minutes}</Title>
+        <MeetingList meetings={meetings} setView={setView} />
+      </Card>
     </>
   );
 }
@@ -228,7 +246,7 @@ function MeetingPage({ id, setView, onError }: Nav & { id: string }) {
         }),
         confirm,
       });
-      setSaved(confirm ? "確定しました。これから AI が読みます。" : "保存しました。");
+      setSaved(confirm ? W.meeting.confirmedDone : W.meeting.savedDone);
       await load();
     } catch (e) {
       onError((e as Error).message);
@@ -236,36 +254,37 @@ function MeetingPage({ id, setView, onError }: Nav & { id: string }) {
   };
 
   const field = (key: keyof typeof form, label: string, rows: number, hint?: string) => (
-    <label style={{ display: "block", marginBottom: 8 }}>
-      {label}{hint && <small style={{ color: "#777" }}>（{hint}）</small>}
-      <textarea value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} rows={rows} style={{ width: "100%" }} />
+    <label className="field">
+      <span>{label}{hint && <small>（{hint}）</small>}</span>
+      <textarea value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} rows={rows} />
     </label>
   );
 
   return (
-    <>
-      <h2>議事録：{m.held_on} {m.kind}</h2>
-      <p style={{ margin: "0 0 8px" }}>
-        相手 <button style={link} onClick={() => setView({ name: "buyer", id: m.buyer_id })}>{m.buyer_name}</button>
-        <span style={{ marginLeft: 8, color: m.status === "draft" ? "#b06000" : "#137333" }}>{m.status === "draft" ? "下書き（AI はまだ読みません）" : "確定"}</span>
-      </p>
-      {field("participants", "参加者", 1)}
-      {field("summary", "要約", 3)}
-      {field("decisions", "決定事項", 3, "1行に1件")}
-      {field("openIssues", "残った論点", 3, "1行に1件")}
-      {field("promises", "次回の約束", 3, "1行に1件。期日は「｜」のあとに")}
-      <div style={{ display: "flex", gap: 8 }}>
-        {(isManager || m.status === "draft") && <button onClick={() => save(false)}>保存</button>}
-        {m.status === "draft" && isManager && <button onClick={() => save(true)}>確定する</button>}
+    <Card>
+      <Title size="big" as="h1">{W.meeting.title(m.held_on, m.kind)}</Title>
+      <div className="row">
+        <span>{W.meeting.partner} <LinkButton onClick={() => setView({ name: "buyer", id: m.buyer_id })}>{m.buyer_name}</LinkButton></span>
+        {m.status === "draft"
+          ? <><Tag kind="wait">{W.tag.draft}</Tag><small>{W.meeting.draft}</small></>
+          : <Tag kind="line">{W.tag.confirmed}</Tag>}
       </div>
-      {saved && <p style={{ color: "#137333" }}>{saved}</p>}
+      {field("participants", W.meeting.participants, 1)}
+      {field("summary", W.meeting.summary, 3)}
+      {field("decisions", W.meeting.decisions, 3, W.meeting.perLine)}
+      {field("openIssues", W.meeting.openIssues, 3, W.meeting.perLine)}
+      {field("promises", W.meeting.promises, 3, W.meeting.promiseHint)}
+      <div className="row">
+        {(isManager || m.status === "draft") && <Button ghost={m.status === "draft" && isManager} onClick={() => save(false)}>{W.meeting.save}</Button>}
+        {m.status === "draft" && isManager && <Button onClick={() => save(true)}>{W.meeting.confirm}</Button>}
+      </div>
+      {saved && <Saved>{saved}</Saved>}
       {m.priorities.some((p) => p.status === "pending") && (
-        <p style={{ fontSize: 14 }}>
-          この商談から「今大事にしていること」の候補が出ています。
-          <button style={link} onClick={() => setView({ name: "buyer", id: m.buyer_id })}>担当バイヤーのページを開く</button>
+        <p className="small">
+          {W.meeting.candidateNote} <LinkButton onClick={() => setView({ name: "buyer", id: m.buyer_id })}>{W.meeting.openBuyer}</LinkButton>
         </p>
       )}
-    </>
+    </Card>
   );
 }
 
@@ -282,21 +301,31 @@ function NewMeeting({ buyerId, setView, onError }: Nav & { buyerId: string }) {
       onError((e as Error).message);
     }
   };
+  const areas = [
+    ["participants", W.meeting.participants, 1],
+    ["summary", W.meeting.summary, 3],
+    ["decisions", `${W.meeting.decisions}（${W.meeting.perLine}）`, 3],
+    ["openIssues", `${W.meeting.openIssues}（${W.meeting.perLine}）`, 3],
+  ] as const;
   return (
-    <>
-      <h2>議事録を書く</h2>
-      <p style={{ color: "#555" }}>録音が無い商談は、ここから手で残します。保存すると下書きになり、確定すると AI が読みます。</p>
-      <label style={{ display: "block", marginBottom: 8 }}>日付 <input type="date" value={form.heldOn} onChange={(e) => setForm({ ...form, heldOn: e.target.value })} /></label>
-      <label style={{ display: "block", marginBottom: 8 }}>種類 <input value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} /></label>
-      {(
-        [["participants", "参加者", 1], ["summary", "要約", 3], ["decisions", "決定事項（1行に1件）", 3], ["openIssues", "残った論点（1行に1件）", 3]] as const
-      ).map(([k, label, rows]) => (
-        <label key={k} style={{ display: "block", marginBottom: 8 }}>
+    <Card>
+      <Title size="big" as="h1">{W.meeting.newTitle}</Title>
+      <p className="lead">{W.meeting.newLead}</p>
+      <div className="row-end">
+        <label className="field">{W.meeting.date}<input type="date" value={form.heldOn} onChange={(e) => setForm({ ...form, heldOn: e.target.value })} /></label>
+        <label className="field">{W.meeting.kind}<input value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} /></label>
+      </div>
+      {areas.map(([k, label, rows]) => (
+        <label key={k} className="field">
           {label}
-          <textarea value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} rows={rows} style={{ width: "100%" }} />
+          <textarea value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} rows={rows} />
         </label>
       ))}
-      <button onClick={submit} disabled={!form.summary.trim()}>保存</button>
-    </>
+      <div className="row">
+        <Button onClick={submit} disabled={!form.summary.trim()}>{W.meeting.save}</Button>
+        {!form.summary.trim() && <Why>{W.meeting.summaryWhy}</Why>}
+      </div>
+    </Card>
   );
 }
+
