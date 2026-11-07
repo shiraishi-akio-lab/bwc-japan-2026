@@ -1,0 +1,7 @@
+# このファイルを .dev.vars に写して値を入れる。.dev.vars は Git に入らない
+ANTHROPIC_API_KEY=
+# 引き継ぎ書を使うとき（npm run handoff:setup の結果）
+HANDOFF_AGENT_ID=
+HANDOFF_ENV_ID=
+# 手元以外で入口の2つのボタンを出すとき
+# DEMO_ENTRY=on

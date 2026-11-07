@@ -1,4 +1,4 @@
--- 相手の棚：企業の関心（取得して人が承認）・担当者の傾向・ことカレンダー
+-- 相手の棚：企業の関心（登録サイトから読み、原文で確かめられたもの）・担当者の傾向・ことカレンダー
 ALTER TABLE accounts ADD COLUMN site_url TEXT NOT NULL DEFAULT ''; -- 公開情報の入口
 
 -- 公開ページから読んだ関心。pending は候補で、approved になって初めて準備室と AI が読む

@@ -328,7 +328,7 @@ export const W = {
     consults: "部下からの相談文",
     consultsLead: "商談の前に、ここまで譲ってよいかを確かめるための1枚です。練習の内容はここには出ません。",
     noConsults: "届いた相談文はありません。",
-    arrived: (at: string) => `届いた日時 ${at}（UTC）`,
+    arrived: (at: string) => `届いた日時 ${new Date(`${at.replace(" ", "T")}Z`).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", dateStyle: "short", timeStyle: "short" })}`,
     candidates: "候補の承認",
     candidatesLead: "承認すると、準備室の下調べとベテランの判断に効きます。",
     cards: "カードの候補",

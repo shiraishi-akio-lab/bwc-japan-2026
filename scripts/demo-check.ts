@@ -13,7 +13,7 @@ import { approvedCard } from "../worker/card";
 import { groundInterests, INTENT_QUESTION, KEY_QUESTION } from "../worker/claude";
 import { sourceKind } from "../src/words";
 import { buyerBriefText, coachBriefText, prepBrief, READS_PER_HOUR, selectEvents, selectInterests, selectObservations, type Interest, type Observation, type SeasonEvent } from "../worker/counterpart";
-import { assertPublicUrl, crawl, isBlockedAddress, makeOpener, parseHtml, readPage, resolveInput, robotsAllows, SITE_LIMITS, SiteError, type Opener } from "../worker/site";
+import { assertPublicUrl, crawl, isBlockedAddress, isRegisteredSite, makeOpener, parseHtml, readPage, resolveInput, robotsAllows, SITE_LIMITS, SiteError, type Opener } from "../worker/site";
 import { agreementCondition, shelfCandidates, type ShelfItem } from "../worker/shelf";
 import type { CaseCard } from "../worker/types";
 
@@ -296,6 +296,15 @@ const throwsSite = async (f: () => Promise<unknown>) => {
   ok(!site.opened.some((u) => u.includes("other.example.net")), "別のサイトへのリンクはたどらない");
   ok(!site.opened.includes("https://example.com/news/3.html"), "robots.txt が禁じたページは開かない");
   ok(!robotsAllows("User-agent: *\nDisallow: /", "/news/") && robotsAllows("User-agent: foo\nDisallow: /\n\nUser-agent: *\nDisallow: /x", "/news/") && robotsAllows("", "/"), "robots.txt の読み方");
+  ok(!robotsAllows("User-agent: *\rDisallow: /x # 理由\r", "/x/1") && robotsAllows("User-agent: *\rDisallow: /x*y", "/w"), "robots.txt の改行とコメントと * を読む");
+  const heavy = Date.now();
+  robotsAllows(`Disallow: ${"#\u2028".repeat(200_000)}`, "/");
+  robotsAllows(`User-agent: *\nDisallow: /${"*\u2028".repeat(200_000)}`, "/");
+  ok(Date.now() - heavy < 500, "細工した robots.txt でも止まらない", `${Date.now() - heavy}ms`);
+  const app = "https://app.example";
+  const reg = (u: string, site: string) => isRegisteredSite(new URL(u, app), site, app);
+  ok(reg("https://www.shop.example/news/", "https://shop.example") && reg("/sample-site/a/news/1.html", "/sample-site/a/index.html"), "登録サイトの中は読める");
+  ok(!reg("https://evil.example/", "https://shop.example") && !reg("/sample-site/b/index.html", "/sample-site/a/index.html") && !reg("https://shop.example/", ""), "登録サイトの外は読めない");
 }
 
 const parsed = parseHtml(`<html><head><title>題 &amp; 名</title><style>p{color:red}</style></head><body><nav><a href="/news/">ニュース</a></nav><script>alert(1)</script><!-- 隠し --><article><h1>見出し</h1><time datetime="2026-10-01">10月1日</time><p>本文&#12354;</p></article><footer>足</footer></body></html>`);
@@ -540,7 +549,11 @@ for (const url of ["http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/
   const r = await call<{ error?: string }>("POST", `/accounts/${ACCOUNT}/read-site`, { url }, mgr);
   ok(r.status === 400, "プライベートのアドレスは API が拒否する", `${url} HTTP ${r.status} ${r.body.error ?? ""}`);
 }
-const ghost = await call<{ error?: string }>("POST", `/accounts/${ACCOUNT}/read-site`, { url: `${BASE}/sample-site/none/index.html` }, mgr);
+for (const url of ["https://example.com/", `${BASE}/sample-site/none/index.html`]) {
+  const r = await call<{ error?: string }>("POST", `/accounts/${ACCOUNT}/read-site`, { url });
+  ok(r.status === 400 && (r.body.error ?? "").includes("登録されたサイト"), "登録サイトの外は読まない", `${url} HTTP ${r.status} ${r.body.error ?? ""}`);
+}
+const ghost = await call<{ error?: string }>("POST", `/accounts/${ACCOUNT}/read-site`, { url: `${BASE}${SAMPLE}none/index.html` }, mgr);
 ok(ghost.status === 400, "見本に無いパス（SPA の殻）は読まない", ghost.body.error);
 
 const inputs = async () => {
@@ -677,7 +690,7 @@ if (!reviewed) throw new Error("1周目の振り返りが残っていません")
 const { prepId, sessionId, next: nextAction } = reviewed as { prepId: string; sessionId: string; next: string };
 const meetingId = (await db.prepare("SELECT id FROM meetings WHERE buyer_id = ? AND status = 'confirmed' LIMIT 1").bind(BUYER).first<{ id: string }>())!.id;
 const priorityId = (await db.prepare("SELECT id FROM priorities WHERE buyer_id = ? LIMIT 1").bind(BUYER).first<{ id: string }>())!.id;
-const promiseId = (await db.prepare("SELECT p.id FROM promises p JOIN meetings m ON m.id = p.meeting_id WHERE m.buyer_id = ? LIMIT 1").bind(BUYER).first<{ id: string }>())!.id;
+const promiseId = (await db.prepare("SELECT p.id FROM promises p JOIN meetings m ON m.id = p.meeting_id WHERE m.buyer_id = ? AND m.status = 'confirmed' LIMIT 1").bind(BUYER).first<{ id: string }>())!.id;
 const realId = (r: Rule) => {
   for (const [prefix, id] of [["/api/preps/", prepId], ["/api/consults/", prepId], ["/api/practice/", sessionId], ["/api/accounts/", ACCOUNT], ["/api/buyers/", BUYER], ["/api/meetings/", meetingId], ["/api/priorities/", priorityId], ["/api/promises/", promiseId]] as const) {
     if (r.path.startsWith(prefix)) return id;
@@ -717,6 +730,15 @@ for (const r of managerOnly) {
 }
 ok(denied === managerOnly.length, "若手は上司の API に入れない", `${denied}本`);
 ok((await call("PATCH", `/meetings/${meetingId}`, { summary: "書き換え", confirm: true })).status === 403, "若手は議事録を確定できない・確定後は直せない");
+await db.batch([
+  db.prepare("INSERT INTO meetings (id, account_id, buyer_id, held_on, kind, participants, summary, decisions_json, open_issues_json, status) VALUES ('check-draft', ?, ?, '2026-11-01', '商談', '', '', '[]', '[]', 'draft')").bind(ACCOUNT, BUYER),
+  db.prepare("INSERT INTO promises (id, meeting_id, text, due) VALUES ('check-draft-promise', 'check-draft', '確かめ用', '')"),
+]);
+ok((await call("POST", "/promises/check-draft-promise", { done: true })).status === 403, "若手は下書きの約束を完了にできない");
+await db.batch([db.prepare("DELETE FROM promises WHERE id = 'check-draft-promise'"), db.prepare("DELETE FROM meetings WHERE id = 'check-draft'")]);
+ok((await call("POST", `/promises/${promiseId}`, { done: true })).status === 200, "若手は確定した約束を完了にできる");
+ok((await call("POST", `/promises/${promiseId}`, { done: false })).status === 403, "若手は完了を戻せない");
+ok((await call("POST", `/promises/${promiseId}`, { done: false }, mgr)).status === 200, "上司は完了を戻せる");
 
 // 上司が読める全 GET に、部下の練習の中身が混じらない（値は D1 から読む）
 const { results: sessionsOfRep } = await db.prepare("SELECT id FROM practice_sessions WHERE user_id = 'user-morikawa'").all<{ id: string }>();

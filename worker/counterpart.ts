@@ -3,7 +3,7 @@ import { loadAccount, loadBuyer, type Account, type Buyer } from "./accounts";
 import { hit } from "./auth";
 import { readInterests } from "./claude";
 import { loadPos, type Pos } from "./pos";
-import { assertPublicUrl, crawl, isSamplePage, makeOpener, resolveInput, SiteError } from "./site";
+import { assertPublicUrl, crawl, isRegisteredSite, isSamplePage, makeOpener, resolveInput, SiteError } from "./site";
 import type { AppEnv, InterestTheme } from "./types";
 
 // 相手の棚：企業の関心（公開情報を読み、原文で確かめられた内容を出どころつきで出す）・担当者の傾向（読むだけ）・ことカレンダー（読むだけ）
@@ -180,6 +180,7 @@ counterpartRoutes.post("/accounts/:id/read-site", async (c) => {
     const start = resolveInput(input, appOrigin);
     const sample = isSamplePage(start, appOrigin);
     if (!sample) assertPublicUrl(start);
+    if (!isRegisteredSite(start, account.site_url, appOrigin)) return c.json({ error: "この取引先に登録されたサイトだけを読めます" }, 400);
     const pages = await crawl(start, makeOpener({ appOrigin, assets: c.env.ASSETS }), !sample);
     const stored = (href: string) => (href.startsWith(`${appOrigin}/`) ? href.slice(appOrigin.length) : href);
     const { results: known } = await db.prepare("SELECT DISTINCT source_url FROM company_interests WHERE account_id = ?").bind(account.id).all<{ source_url: string }>();

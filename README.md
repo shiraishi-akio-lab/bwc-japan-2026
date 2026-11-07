@@ -104,7 +104,7 @@ Node.js と Anthropic の API キーが要ります。
 npm install
 ```
 
-`.dev.vars` を作り、`ANTHROPIC_API_KEY` を書きます（Git には入りません）。
+`.dev.vars.example` を `.dev.vars` に写し、`ANTHROPIC_API_KEY` を書きます（`.dev.vars` は Git には入りません）。
 
 ```bash
 npm run db:migrate:local
@@ -148,3 +148,5 @@ BASE_URL=http://localhost:5173 npm run demo:check -- --runs=3
 - `src/assets/logo.svg`
 - `migrations/` に含まれる架空のデータ（SQL の構文やテーブル定義は MIT の対象です）
 - 「営業GYM」の名前とロゴ
+
+ロゴと、画面の見本5枚は Lovart で作成しました。見本の画像はリポジトリに入れていません。

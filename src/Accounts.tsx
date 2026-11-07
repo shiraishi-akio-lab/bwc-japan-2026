@@ -193,7 +193,7 @@ function BuyerPage({ id, setView, onError, onPractice }: Nav & { id: string; onP
         {promises.length === 0 && <Empty>{W.accounts.noPromises}</Empty>}
         {promises.map((p) => (
           <label key={p.id} className="check">
-            <input type="checkbox" checked={!!p.done} onChange={() => toggle(p)} />
+            <input type="checkbox" checked={!!p.done} disabled={!isManager && (!!p.done || p.meeting_status === "draft")} onChange={() => toggle(p)} />
             <span>
               {p.text}{p.due && `（${p.due}まで）`}
               {p.meeting_status === "draft" && <small>{W.accounts.meetingDraftNote}</small>}

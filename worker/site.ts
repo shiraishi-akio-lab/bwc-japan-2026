@@ -107,6 +107,15 @@ const dohResolve: Resolver = async (host) => {
 
 export const isSamplePage = (url: URL, appOrigin: string) => url.origin === appOrigin && url.pathname.startsWith(SAMPLE_PREFIX);
 
+// 読んでよいのは、取引先に登録されたサイトだけ。読んだ関心は会社の全員とバイヤー役に届くので、入力の URL を信じない
+const bareHost = (u: URL) => u.hostname.replace(/^www\./, "");
+export function isRegisteredSite(target: URL, registered: string, appOrigin: string): boolean {
+  if (!registered.trim()) return false;
+  const site = resolveInput(registered, appOrigin);
+  if (!isSamplePage(site, appOrigin)) return bareHost(target) === bareHost(site);
+  return target.origin === site.origin && target.pathname.startsWith(site.pathname.slice(0, site.pathname.lastIndexOf("/") + 1));
+}
+
 type OpenerDeps = {
   appOrigin: string;
   assets: Pick<Fetcher, "fetch">;
@@ -282,13 +291,19 @@ export function parseHtml(html: string): Parsed {
 }
 
 // ---- robots.txt（実在のサイトだけ。* の組の Disallow を前方一致で見る） ----
+const ROBOTS_CHARS = 100_000;
+
+const cut = (s: string, mark: string) => {
+  const at = s.indexOf(mark);
+  return at < 0 ? s : s.slice(0, at);
+};
 
 export function robotsAllows(robots: string, path: string): boolean {
   let forAll = false;
   let inRules = false;
   const rules: string[] = [];
-  for (const line of robots.split(/\r?\n/)) {
-    const [key, ...rest] = line.replace(/#.*$/, "").split(":");
+  for (const line of robots.slice(0, ROBOTS_CHARS).split(/\r\n|\r|\n/)) {
+    const [key, ...rest] = cut(line, "#").split(":");
     const value = rest.join(":").trim();
     const k = key.trim().toLowerCase();
     if (k === "user-agent") {
@@ -299,7 +314,7 @@ export function robotsAllows(robots: string, path: string): boolean {
       if (forAll && k === "disallow" && value) rules.push(value);
     }
   }
-  return !rules.some((r) => path.startsWith(r.replace(/\*.*$/, "")));
+  return !rules.some((r) => path.startsWith(cut(r, "*")));
 }
 
 const loadRobots = async (site: URL, open: Opener) => {

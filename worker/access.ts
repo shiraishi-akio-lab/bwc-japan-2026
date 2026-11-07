@@ -38,7 +38,7 @@ export const RULES: Rule[] = [
   rule("POST", "/accounts/:id/handoffs", "any", "handoff"),
   rule("GET", "/handoffs/:id", "any"),
 
-  // 相手の棚。候補は上司だけが見る（若手には承認済みだけを返す）
+  // 相手の棚。読めるのは取引先に登録されたサイトだけ。読んだ関心は会社の全員が見る
   rule("GET", "/accounts/:id/interests", "any"),
   rule("POST", "/accounts/:id/read-site", "any", "claude"),
   rule("GET", "/buyers/:id/observations", "any"),

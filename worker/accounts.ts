@@ -189,10 +189,14 @@ accountRoutes.post("/priorities/:id", async (c) => {
 });
 
 accountRoutes.post("/promises/:id", async (c) => {
+  const me = c.get("user");
   const { done } = await c.req.json<{ done?: boolean }>();
-  const r = await c.env.DB.prepare(
-    "UPDATE promises SET done = ? WHERE id = ? AND meeting_id IN (SELECT m.id FROM meetings m JOIN accounts a ON a.id = m.account_id WHERE a.company_id = ?)",
-  ).bind(done ? 1 : 0, c.req.param("id"), c.get("user").company_id).run();
-  if (r.meta.changes === 0) return c.json({ error: "約束が見つかりません" }, 404);
+  const found = await c.env.DB.prepare(
+    "SELECT p.id, m.status FROM promises p JOIN meetings m ON m.id = p.meeting_id JOIN accounts a ON a.id = m.account_id WHERE p.id = ? AND a.company_id = ?",
+  ).bind(c.req.param("id"), me.company_id).first<{ id: string; status: string }>();
+  if (!found) return c.json({ error: "約束が見つかりません" }, 404);
+  // 完了の印が付いた約束は、確定のときに書き直されない。上司が見ていない文を確定に残さないよう、若手は確定済みの約束を完了にするだけ
+  if (me.role !== "manager" && (found.status !== "confirmed" || !done)) return c.json({ error: "完了を付けられるのは確定した議事録の約束だけで、戻すのは上司の操作です" }, 403);
+  await c.env.DB.prepare("UPDATE promises SET done = ? WHERE id = ?").bind(done ? 1 : 0, found.id).run();
   return c.json({ ok: true });
 });
