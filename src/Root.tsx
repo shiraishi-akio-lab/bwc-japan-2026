@@ -90,10 +90,12 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
               </button>
             </div>
             <p className="small login-note">{W.login.entryNote}</p>
-            <details>
-              <summary className="small">{W.login.byPassword}</summary>
-              <div style={{ marginTop: 12 }}>{form}</div>
-            </details>
+            {!needPass && (
+              <details>
+                <summary className="small">{W.login.byPassword}</summary>
+                <div style={{ marginTop: 12 }}>{form}</div>
+              </details>
+            )}
           </>
         ) : form}
       </div>

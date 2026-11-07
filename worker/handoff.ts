@@ -123,6 +123,9 @@ async function refresh(db: D1Database, apiKey: string, h: Handoff) {
 
 export const handoffRoutes = new Hono<AppEnv>();
 
+// 引き継ぎ書を作れる環境かどうか。公開版では止めているので、画面はこれを見て入力欄を出さない
+handoffRoutes.get("/handoff-ready", (c) => c.json({ ready: !!(c.env.ANTHROPIC_API_KEY && c.env.HANDOFF_AGENT_ID && c.env.HANDOFF_ENV_ID) }));
+
 handoffRoutes.get("/accounts/:id/handoffs", async (c) => {
   const account = await loadAccount(c.env.DB, c.req.param("id"), c.get("user").company_id);
   if (!account) return c.json({ error: "取引先が見つかりません" }, 404);
@@ -135,7 +138,7 @@ handoffRoutes.get("/accounts/:id/handoffs", async (c) => {
 handoffRoutes.post("/accounts/:id/handoffs", async (c) => {
   const { ANTHROPIC_API_KEY: apiKey, HANDOFF_AGENT_ID: agent, HANDOFF_ENV_ID: environmentId } = c.env;
   if (!apiKey) return c.json({ error: "API キーが設定されていません" }, 503);
-  if (!agent || !environmentId) return c.json({ error: "引き継ぎの準備ができていません（npm run handoff:setup）" }, 503);
+  if (!agent || !environmentId) return c.json({ error: "公開版では、引き継ぎ書の作成を止めています" }, 503);
   const id = c.req.param("id");
   const account = await loadAccount(c.env.DB, id, c.get("user").company_id);
   if (!account) return c.json({ error: "取引先が見つかりません" }, 404);

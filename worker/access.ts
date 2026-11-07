@@ -34,6 +34,7 @@ export const RULES: Rule[] = [
   rule("PATCH", "/meetings/:id", "any"),
   rule("POST", "/priorities/:id", MANAGER),
   rule("POST", "/promises/:id", "any"),
+  rule("GET", "/handoff-ready", "any"),
   rule("GET", "/accounts/:id/handoffs", "any"),
   rule("POST", "/accounts/:id/handoffs", "any", "handoff"),
   rule("GET", "/handoffs/:id", "any"),

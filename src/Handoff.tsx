@@ -127,7 +127,9 @@ export function HandoffStart({ accountId, ownerRep, setView, onError }: { accoun
   const [toRep, setToRep] = useState("");
   const [rows, setRows] = useState<HandoffRow[]>([]);
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState<boolean | null>(null);
   useEffect(() => {
+    call<{ ready: boolean }>("/api/handoff-ready").then((d) => setReady(d.ready)).catch((e: Error) => onError(e.message));
     call<HandoffRow[]>(`/api/accounts/${accountId}/handoffs`).then(setRows).catch((e: Error) => onError(e.message));
   }, [accountId, onError]);
   const start = async () => {
@@ -143,11 +145,16 @@ export function HandoffStart({ accountId, ownerRep, setView, onError }: { accoun
   return (
     <>
       <Title size="mid">{W.handoff.start}</Title>
-      <p className="muted">{W.handoff.startLead(ownerRep)}</p>
-      <div className="row-end">
-        <label className="field">{W.handoff.to}<input value={toRep} onChange={(e) => setToRep(e.target.value)} maxLength={40} /></label>
-        <Button onClick={start} disabled={busy || !toRep.trim()}>{W.handoff.make}</Button>
-      </div>
+      {ready === false && <p className="muted">{W.handoff.off}</p>}
+      {ready && (
+        <>
+          <p className="muted">{W.handoff.startLead(ownerRep)}</p>
+          <div className="row-end">
+            <label className="field">{W.handoff.to}<input value={toRep} onChange={(e) => setToRep(e.target.value)} maxLength={40} /></label>
+            <Button onClick={start} disabled={busy || !toRep.trim()}>{W.handoff.make}</Button>
+          </div>
+        </>
+      )}
       {rows.map((r) => (
         <button key={r.id} type="button" className="pick" onClick={() => setView({ name: "handoff", id: r.id })}>
           <strong>{r.from_rep} → {r.to_rep}</strong>
