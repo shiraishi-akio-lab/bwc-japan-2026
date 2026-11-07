@@ -21,8 +21,12 @@ const DEMO_USERS = { rep: "user-morikawa", manager: "user-manager" } as const;
 export const DEMO_ENTRY_LIMIT = { limit: 30, windowSeconds: 15 * 60 };
 // 手元では常に出す。手元以外では DEMO_ENTRY=on を明示したときだけ（既定は閉じる）
 export const demoEntryOn = (url: string, flag?: string) => isLocal(url) || flag === "on";
+// 手元以外では合言葉も要る。合言葉が設定されていなければ、誰も入れない
+export const demoPassOk = async (url: string, secret?: string, given?: string) =>
+  isLocal(url) || (!!secret && !!given && (await sha256(given)) === (await sha256(secret)));
 
 const FAILED = "メールアドレスまたはパスワードが違います";
+const WRONG_PASS = "合言葉が違います";
 const LOCKED = "試行が多すぎます。しばらくしてからやり直してください";
 
 const encoder = new TextEncoder();
@@ -143,16 +147,17 @@ authRoutes.post("/login", async (c) => {
   return c.json(publicUser(user!));
 });
 
-authRoutes.get("/demo-entry", (c) => c.json({ on: demoEntryOn(c.req.url, c.env.DEMO_ENTRY) }));
+authRoutes.get("/demo-entry", (c) => c.json({ on: demoEntryOn(c.req.url, c.env.DEMO_ENTRY), pass: !isLocal(c.req.url) }));
 
 authRoutes.post("/demo-entry", async (c) => {
   if (!demoEntryOn(c.req.url, c.env.DEMO_ENTRY)) return c.json({ error: "見つかりません" }, 404);
   const db = c.env.DB;
-  const { role } = await c.req.json<{ role?: string }>().catch(() => ({ role: undefined }));
+  const { role, pass } = await c.req.json<{ role?: string; pass?: string }>().catch(() => ({ role: undefined, pass: undefined }));
   const userId = role === "rep" || role === "manager" ? DEMO_USERS[role] : null;
   if (!userId) return c.json({ error: "入る人を選んでください" }, 400);
   const ipKey = `demo:ip:${await sha256(c.req.header("cf-connecting-ip") ?? "local")}`;
   if (!(await hit(db, ipKey, DEMO_ENTRY_LIMIT.limit, DEMO_ENTRY_LIMIT.windowSeconds))) return c.json({ error: LOCKED }, 429);
+  if (!(await demoPassOk(c.req.url, c.env.DEMO_PASS, pass))) return c.json({ error: WRONG_PASS }, 403);
   if (!(await db.prepare("SELECT 1 AS ok FROM users WHERE id = ?").bind(userId).first())) return c.json({ error: "見本の人が登録されていません" }, 503);
   const token = newToken();
   await db.batch([

@@ -18,16 +18,18 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entry, setEntry] = useState(false); // 入口の2つのボタンを出すか。決めるのはサーバー
+  const [needPass, setNeedPass] = useState(false);
+  const [pass, setPass] = useState("");
 
   useEffect(() => {
-    fetch("/api/demo-entry").then((r) => r.json() as Promise<{ on?: boolean }>).then((d) => setEntry(!!d.on)).catch(() => setEntry(false));
+    fetch("/api/demo-entry").then((r) => r.json() as Promise<{ on?: boolean; pass?: boolean }>).then((d) => { setEntry(!!d.on); setNeedPass(!!d.pass); }).catch(() => setEntry(false));
   }, []);
 
   const enter = async (role: "rep" | "manager") => {
     setBusy(true);
     setError(null);
     try {
-      onDone(await post<Me>("/api/demo-entry", { role }));
+      onDone(await post<Me>("/api/demo-entry", { role, pass }));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -71,6 +73,12 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
         <ErrorNotice message={error} />
         {entry ? (
           <>
+            {needPass && (
+              <label className="field">
+                {W.login.pass}
+                <input type="password" name="pass" autoComplete="off" value={pass} onChange={(e) => setPass(e.target.value)} />
+              </label>
+            )}
             <div className="stack">
               <button type="button" className="pick" disabled={busy} onClick={() => enter("rep")}>
                 <span className="pick-name">{W.login.rep}</span>

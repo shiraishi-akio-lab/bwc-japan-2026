@@ -20,6 +20,7 @@ export const W = {
     password: "パスワード",
     submit: "ログイン",
     entryLead: "どちらの立場で見ますか。",
+    pass: "合言葉",
     entryNote: "すべて架空のデータです。書いた内容は、次に入る人にも見えます。",
     rep: "担当者（森川）として入る",
     repSub: "商談の準備と練習をする",

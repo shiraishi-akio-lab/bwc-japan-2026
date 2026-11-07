@@ -13,9 +13,10 @@
     {
       "binding": "DB",
       "database_name": "bwc-japan-2026",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "15764059-3b60-46a1-8515-343174f4be97",
       "migrations_dir": "./migrations"
     }
   ],
+  "vars": { "DEMO_ENTRY": "on" }, // 手元以外では、合言葉（DEMO_PASS）を設定しない限り誰も入れない
   "observability": { "enabled": true }
 }

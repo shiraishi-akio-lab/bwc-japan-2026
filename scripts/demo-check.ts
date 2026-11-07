@@ -8,7 +8,7 @@ import path from "node:path";
 import { getPlatformProxy } from "wrangler";
 import { DAY_LIMITS, RULES, type Rule } from "../worker/access";
 import { buildRecord, loadBuyer } from "../worker/accounts";
-import { demoEntryOn, LOGIN_LIMITS, sessionCookie } from "../worker/auth";
+import { demoEntryOn, demoPassOk, LOGIN_LIMITS, sessionCookie } from "../worker/auth";
 import { approvedCard } from "../worker/card";
 import { groundInterests, INTENT_QUESTION, KEY_QUESTION } from "../worker/claude";
 import { sourceKind } from "../src/words";
@@ -125,6 +125,9 @@ ok(defined.size === listed.size && [...defined].every((d) => listed.has(d)), "�
 ok(RULES.filter((r) => r.allow === "public").map((r) => `${r.method} ${r.path}`).join() === "GET /api/health,POST /api/login,GET /api/demo-entry,POST /api/demo-entry", "認証なしで通るのはログイン、入口のボタン、health だけ");
 // 入口の2つのボタン：手元以外は明示したときだけ。入れるのは架空の2人だけ
 ok(!demoEntryOn("https://bwc.example.workers.dev/api/demo-entry") && !demoEntryOn("https://bwc.example.workers.dev/api/demo-entry", "off") && demoEntryOn("https://bwc.example.workers.dev/api/demo-entry", "on") && demoEntryOn(`${BASE}/api/demo-entry`), "入口のボタンは手元以外では既定で閉じている");
+const remote = "https://bwc.example.workers.dev/api/demo-entry";
+ok(await demoPassOk(remote, "right-pass", "right-pass") && !(await demoPassOk(remote, "right-pass", "wrong")) && !(await demoPassOk(remote, "right-pass")) && !(await demoPassOk(remote, undefined, "x")) && !(await demoPassOk(remote, "", "")), "手元以外では合言葉が合うときだけ入れる（未設定なら誰も入れない）");
+ok(await demoPassOk(`${BASE}/api/demo-entry`), "手元では合言葉は要らない");
 const entryRep = await send<{ role?: string; email?: string }>("POST", "/demo-entry", { body: { role: "rep" } });
 const entryMgr = await send<{ role?: string; email?: string }>("POST", "/demo-entry", { body: { role: "manager" } });
 ok(entryRep.status === 200 && entryRep.body.role === "rep" && entryRep.body.email === creds.rep.email && entryMgr.status === 200 && entryMgr.body.role === "manager" && entryMgr.body.email === creds.manager.email, "入口のボタンで担当者と上司に入れる");
