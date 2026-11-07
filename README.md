@@ -134,4 +134,15 @@ BASE_URL=http://localhost:5173 npm run demo:check -- --runs=3
 
 ## ライセンス
 
-未定（提出までに決めます）。
+コードは MIT ライセンスです（[LICENSE](LICENSE)）。著作権者は株式会社未楽です。
+
+次のものは MIT の対象外で、再利用できません。
+
+- `data/`
+- `knowledge/`
+- `samples/`
+- `public/sample-site/`
+- `eval-results/`
+- `src/assets/logo.svg`
+- `migrations/` に含まれる架空のデータ（SQL の構文やテーブル定義は MIT の対象です）
+- 「営業GYM」の名前とロゴ
