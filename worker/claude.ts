@@ -61,6 +61,7 @@ export async function buyerReply(apiKey: string, turns: Turn[], persona: string)
 }
 
 // 準備室のバイヤー役。段階はコードが持ち、立場もコードが決める。Claude は決められた立場で文面を書く
+export const INTENT_QUESTION = "どうしたいの？"; // 最初の発言への返し。中身を聞いてから、次の問いに進む
 export const KEY_QUESTION = "どれを外すの？"; // 挨拶と同じく固定文
 export const RETRY_LINE = "では、改めて聞きます。どれを外すの？";
 export const ROUND_END_LINE = "今日はここまでにしましょう。返しを練り直して、もう一度来てください。";

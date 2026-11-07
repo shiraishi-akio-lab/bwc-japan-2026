@@ -18,11 +18,13 @@ type Recap = {
   results: { initiative: string; result: string; outcome: string; held_on: string }[];
   askCause: boolean;
 };
+type Product = { name: string; price_to_retail: string; features: string[]; target: string; category: string; concern: string };
 type Prep = {
   consult: ConsultBody | null;
   reply: Reply | null;
   id: string; sessionId: string; buyerId: string; buyerName: string; accountName: string; accountId: string; accountSite: string; meetingOn: string; submittedAt: string;
   goal: string; occasionId: string; occasionName: string;
+  productView: string; product: Product;
   gainAnswer: string; causeHypothesis: string; returns: string[]; landing: string; stage: string; turns: Turn[];
 };
 
@@ -38,6 +40,7 @@ const fromHash = () => {
 
 // 判断をもう見たか。返しを書き始めていれば見たことになる
 const judged = (p: Prep) => p.stage !== "opening" && (p.stage !== "asked" || p.returns.length > 0 || p.landing !== "");
+const gained = (p: Prep) => !!p.gainAnswer && !!p.productView;
 const prepared = (p: Prep) => p.returns.length >= 2 && p.landing !== "";
 
 // その段階を開けるか。条件は依頼書の「次へ進む条件」
@@ -45,7 +48,7 @@ function canOpen(step: number, p: Prep, seen: boolean) {
   if (step <= S.goal) return true;
   if (!p.goal) return false;
   if (step <= S.gain) return true;
-  if (!p.gainAnswer) return false;
+  if (!gained(p)) return false;
   if (step === S.talk) return true;
   if (p.stage === "opening") return false;
   if (step === S.judgment) return true;
@@ -59,9 +62,9 @@ function furthest(p: Prep) {
   const moved = ["retry", "refused", "agreed", "ended"].includes(p.stage);
   if (prepared(p) && p.consult) return S.consult;
   if (prepared(p) && moved) return S.again;
-  if (p.gainAnswer && p.stage !== "opening" && (p.returns.length > 0 || p.landing !== "")) return S.returns;
-  if (p.gainAnswer && moved) return S.judgment; // 返しが無いまま閉じた回は、判断から
-  if (p.gainAnswer) return S.talk;
+  if (gained(p) && p.stage !== "opening" && (p.returns.length > 0 || p.landing !== "")) return S.returns;
+  if (gained(p) && moved) return S.judgment; // 返しが無いまま閉じた回は、判断から
+  if (gained(p)) return S.talk;
   return S.recap;
 }
 
@@ -240,13 +243,16 @@ function StepNav({ back, children }: { back?: () => void; children: ReactNode })
 type Occasion = { id: string; name: string; store_action: string; deadline_on: string };
 function GoalStep({ prep, onChange, onError, go }: Nav) {
   const [occasions, setOccasions] = useState<Occasion[] | null>(null);
+  const [practice, setPractice] = useState<Occasion | null>(null);
   const [pick, setPick] = useState(prep.occasionId);
   const [goal, setGoal] = useState(prep.goal);
   useEffect(() => {
-    call<{ events: Occasion[] }>(`/api/preps/${prep.id}/brief`).then((b) => setOccasions(b.events)).catch((e: Error) => onError(e.message));
+    call<{ events: Occasion[]; practice: Occasion | null }>(`/api/preps/${prep.id}/brief`).then((b) => { setPractice(b.practice); setOccasions(b.practice ? [b.practice, ...b.events] : b.events); }).catch((e: Error) => onError(e.message));
   }, [prep.id, onError]);
-  const picked = occasions?.find((o) => o.id === pick);
-  const ready = !!goal.trim() && (!!picked || occasions?.length === 0);
+  const isShelf = (o: Occasion) => o.id === practice?.id; // 選べるのは練習の機会だけ。行事は見えるだけ
+  const picked = occasions?.find((o) => o.id === pick && isShelf(o));
+  const noShelf = !!occasions && !practice;
+  const ready = !!goal.trim() && (!!picked || noShelf);
   const next = () => call<Prep>(`/api/preps/${prep.id}`, "PATCH", { goal, occasionId: picked?.id ?? "" })
     .then((p) => { onChange(p); go(S.recap); }).catch((e: Error) => onError(e.message));
   return (
@@ -259,14 +265,15 @@ function GoalStep({ prep, onChange, onError, go }: Nav) {
         {occasions?.length === 0 && <Empty>{W.goal.none}</Empty>}
         <div className="grid-3">
           {occasions?.map((o) => (
-            <button key={o.id} type="button" className={`pick${o.id === pick ? " pick-on" : ""}`} aria-pressed={o.id === pick} onClick={() => setPick(o.id)}>
+            <button key={o.id} type="button" className={`pick${o.id === picked?.id ? " pick-on" : ""}`} aria-pressed={o.id === picked?.id} disabled={!isShelf(o)} onClick={() => setPick(o.id)}>
               <span className="pick-name">{o.name}</span>
               <span className="muted">{W.goal.deadline(o.deadline_on)}</span>
               <span>{o.store_action}</span>
+              {!isShelf(o) && <span className="small">{W.goal.outOfScope}</span>}
             </button>
           ))}
         </div>
-        {picked && !picked.store_action.includes("棚割り") && <Why>{W.goal.notShelf}</Why>}
+        {occasions && occasions.length > 0 && <p className="small">{noShelf ? W.goal.noShelf : W.goal.onlyShelf}</p>}
       </Card>
       <Card>
         <Ask question={W.goal.ask} value={goal} onChange={setGoal} rows={3} />
@@ -338,15 +345,15 @@ function RecapStep({ prep, onChange, onError, go }: Nav) {
 }
 
 function BriefStep({ prep, onError, go }: Nav) {
-  const [used, setUsed] = useState(0); // 「使う」を押したら、下調べを読み直す
+  const [reads, setReads] = useState(0); // 公開情報を読んだら、下調べを読み直す
   return (
     <>
       <div className="stack">
         <Title size="big" as="h1">{W.steps.names[S.brief]}</Title>
         <p className="lead">{W.brief.lead}</p>
       </div>
-      <PrepBrief prepId={prep.id} written={[prep.gainAnswer, ...prep.returns, prep.landing, used].join("\n")} onError={onError} />
-      <Card><InterestsPanel accountId={prep.accountId} siteUrl={prep.accountSite} onError={onError} onChange={() => setUsed((n) => n + 1)} reading /></Card>
+      <Card><InterestsPanel accountId={prep.accountId} siteUrl={prep.accountSite} onError={onError} onChange={() => setReads((n) => n + 1)} reading /></Card>
+      <PrepBrief prepId={prep.id} written={[prep.productView, prep.gainAnswer, ...prep.returns, prep.landing, reads].join("\n")} onError={onError} />
       <StepNav back={() => go(S.recap)}><Button onClick={() => go(S.gain)}>{W.steps.next}</Button></StepNav>
     </>
   );
@@ -354,22 +361,31 @@ function BriefStep({ prep, onError, go }: Nav) {
 
 // 得意先の得：Claude は使わない固定の問い
 function GainStep({ prep, onChange, onError, go }: Nav) {
+  const [view, setView] = useState(prep.productView);
   const [answer, setAnswer] = useState(prep.gainAnswer);
+  const changed = view.trim() !== prep.productView || answer.trim() !== prep.gainAnswer;
   // 書き留めずに移っても、書いた文字を消さない
   const leave = (to: number) => {
-    if (!answer.trim() || answer.trim() === prep.gainAnswer) return go(to);
-    call<Prep>(`/api/preps/${prep.id}`, "PATCH", { gainAnswer: answer }).then((p) => { onChange(p); go(to); }).catch((e: Error) => onError(e.message));
+    if (!changed) return go(to);
+    call<Prep>(`/api/preps/${prep.id}`, "PATCH", { productView: view, gainAnswer: answer }).then((p) => { onChange(p); go(to); }).catch((e: Error) => onError(e.message));
   };
   const save = () => leave(S.talk);
+  const { product } = prep;
   return (
     <>
       <Card>
+        <Title>{W.gain.product}</Title>
+        <p>{personName(product.name)}</p>
+        <div className="facts-one"><Facts rows={[[W.gain.features, product.features.join("・")], [W.gain.price, product.price_to_retail], [W.gain.target, product.target], [W.gain.category, product.category], [W.gain.concern, product.concern]]} /></div>
+      </Card>
+      <Card>
+        <Ask question={W.gain.productAsk} value={view} onChange={setView} rows={4} />
         <Ask question={W.gain.ask} value={answer} onChange={setAnswer} />
-        <div><Button onClick={save} disabled={!answer.trim() || answer.trim() === prep.gainAnswer}>{W.gain.save}</Button></div>
+        <div><Button onClick={save} disabled={!view.trim() || !answer.trim() || !changed}>{W.gain.save}</Button></div>
       </Card>
       <StepNav back={() => leave(S.brief)}>
-        {!prep.gainAnswer && <Why>{W.gain.why}</Why>}
-        <Button ghost onClick={() => leave(S.talk)} disabled={!prep.gainAnswer}>{W.steps.next}</Button>
+        {!gained(prep) && <Why>{W.gain.why}</Why>}
+        <Button ghost onClick={() => leave(S.talk)} disabled={!gained(prep)}>{W.steps.next}</Button>
       </StepNav>
     </>
   );
@@ -423,7 +439,7 @@ function Conversation({ prep, onChange, onError, guide, canSay, keyLine, childre
         <ol className="flow">
           {W.talk.flow.map((name, i) => <li key={name} aria-current={i === now ? "step" : undefined}>{name}</li>)}
         </ol>
-        {canSay && (prep.stage === "asked" || prep.stage === "refused") && <p className="small">{W.talk.hint(buyer)}</p>}
+        {canSay && (prep.stage !== "opening" || prep.turns.length > 1) && <p className="small">{W.talk.hint(buyer)}</p>}
       </aside>
     </div>
   );
@@ -435,7 +451,7 @@ function TalkStep(p: Nav & { onJudge: () => void }) {
   const canSay = prep.stage === "opening" || prep.stage === "asked";
   return (
     <>
-      <Conversation {...p} guide={canSay ? W.talk.guide(buyer) : W.steps.names[S.talk]} canSay={canSay} keyLine={KEY_LINE} />
+      <Conversation {...p} guide={canSay ? W.talk.guide(buyer, prep.occasionName) : W.steps.names[S.talk]} canSay={canSay} keyLine={KEY_LINE} />
       <StepNav back={() => go(S.gain)}>
         {prep.stage === "opening" && <Why>{W.talk.judgmentWhy}</Why>}
         <Button onClick={onJudge} disabled={prep.stage === "opening"}>{W.talk.toJudgment}</Button>

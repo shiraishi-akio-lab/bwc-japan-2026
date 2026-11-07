@@ -54,6 +54,7 @@ export function App({ onLogout }: { onLogout: () => void }) {
       await fn();
     } catch (e) {
       setError((e as Error).message);
+      window.scrollTo(0, 0); // エラーは画面の上に出る。ボタンが下にあっても見えるように
     } finally {
       setBusy(false);
     }
@@ -71,9 +72,10 @@ export function App({ onLogout }: { onLogout: () => void }) {
       setMemoOpen(false);
       setResult(null);
       setNext(null);
+      setMode("practice");
     });
 
-  // 本番の文字起こしを読み込んだら、練習と同じ画面で「確かめる」に進む
+  // 本番の文字起こしを読み込んだら、本番の振り返りのタブのまま「確かめる」に進む
   const fromRecording = (id: string, t: Turn[], meeting: string | null) => {
     setMeetingId(meeting);
     setSessionId(id);
@@ -83,7 +85,18 @@ export function App({ onLogout }: { onLogout: () => void }) {
     setMemoOpen(true);
     setResult(null);
     setNext(null);
-    setMode("practice");
+  };
+
+  // 本番の振り返りを閉じる。次の文字起こしを読み込める状態に戻す
+  const closeRecording = () => {
+    setSessionId(null);
+    setTurns([]);
+    setMeetingId(null);
+    setIsRecording(false);
+    setMemoOpen(false);
+    setMemo({ facts: "", interpretation: "", nextCheck: "" });
+    setResult(null);
+    setNext(null);
   };
 
   // 準備室の練習を、今までと同じ3分メモ・確かめる・次の一行動で振り返る
@@ -122,17 +135,18 @@ export function App({ onLogout }: { onLogout: () => void }) {
   const buyerLabel = isRecording ? W.practice.buyer : W.talk.buyerRole(personName(buyerName));
   const spoke = turns.some((t) => t.role === "rep");
   const self = W.band.self(honor(personName(me.displayName)));
+  const reviewing = mode === "recording" && isRecording && !!sessionId; // 読み込んだ本番を振り返っている間
 
   return (
     <Shell
       items={[["prep", n.prep], ["practice", n.practice], ["recording", n.recording], ["accounts", n.accounts]]}
       current={mode}
-      onGo={(m) => { if (m === "accounts") setView({ name: "list" }); setMode(m); }}
+      onGo={(m) => { if (m === "accounts") setView({ name: "list" }); if (m === "practice" && isRecording) closeRecording(); setMode(m); }}
       onLogout={onLogout}
     >
       {mode === "prep" && <PrepRoom onReview={fromPrepRoom} />}
 
-      {mode === "recording" && (
+      {mode === "recording" && !reviewing && (
         <>
           <Band kind="self" right={self} />
           <main className="page"><Recording buyers={buyers} onReady={fromRecording} /></main>
@@ -148,7 +162,7 @@ export function App({ onLogout }: { onLogout: () => void }) {
         </>
       )}
 
-      {mode === "practice" && (
+      {(mode === "practice" || reviewing) && (
         <>
           <Band kind="self" right={self} />
           <main className="page">
@@ -202,8 +216,8 @@ export function App({ onLogout }: { onLogout: () => void }) {
                   </Card>
                 )}
                 <Card>
-                  <Title size="big" as="h1">{W.practice.memo}</Title>
-                  <p className="lead">{W.practice.memoLead}</p>
+                  <Title size="big" as="h1">{isRecording ? W.recording.memo : W.practice.memo}</Title>
+                  <p className="lead">{isRecording ? W.recording.memoLead : W.practice.memoLead}</p>
                   {(
                     [
                       ["facts", W.practice.facts],
@@ -219,6 +233,7 @@ export function App({ onLogout }: { onLogout: () => void }) {
                   <div className="row">
                     <Button onClick={checkIt} disabled={busy || !spoke}>{W.practice.check}</Button>
                     {!isRecording && !fromPrep && <Button ghost onClick={() => setMemoOpen(false)} disabled={busy}>{W.practice.backTalk}</Button>}
+                    {isRecording && <Button ghost onClick={closeRecording} disabled={busy}>{W.recording.other}</Button>}
                     {busy && <Waiting>{W.state.checking}</Waiting>}
                   </div>
                 </Card>
@@ -246,11 +261,12 @@ export function App({ onLogout }: { onLogout: () => void }) {
                   <LinkButton onClick={() => setShowMap(!showMap)}>{showMap ? W.practice.closeMap : W.practice.openMap}</LinkButton>
                 </p>
                 <div className="row">
-                  <Button onClick={start} disabled={busy}>{W.practice.again}</Button>
+                  <Button onClick={start} disabled={busy}>{isRecording ? W.recording.toPractice : W.practice.again}</Button>
                   <Button ghost onClick={() => { setNext(null); setResult(null); setMemoOpen(true); }} disabled={busy}>{W.practice.editMemo}</Button>
+                  {isRecording && <Button ghost onClick={closeRecording} disabled={busy}>{W.recording.other}</Button>}
                 </div>
                 <details>
-                  <summary>{W.practice.showTalk}</summary>
+                  <summary>{isRecording ? W.practice.fromRecording : W.practice.showTalk}</summary>
                   <div style={{ marginTop: 12 }}><Chat turns={turns} buyerLabel={buyerLabel} /></div>
                 </details>
               </Card>

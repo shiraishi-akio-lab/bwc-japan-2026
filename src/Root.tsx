@@ -17,6 +17,23 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [entry, setEntry] = useState(false); // 入口の2つのボタンを出すか。決めるのはサーバー
+
+  useEffect(() => {
+    fetch("/api/demo-entry").then((r) => r.json() as Promise<{ on?: boolean }>).then((d) => setEntry(!!d.on)).catch(() => setEntry(false));
+  }, []);
+
+  const enter = async (role: "rep" | "manager") => {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await post<Me>("/api/demo-entry", { role }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,12 +49,7 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
     }
   };
 
-  return (
-    <main className="login">
-      <div className="login-card card">
-        <h1><Logo className="login-logo" /></h1>
-        <p className="login-note">{W.login.lead}（{W.app.fictional}）</p>
-        <ErrorNotice message={error} />
+  const form = (
         <form onSubmit={submit} className="stack">
           <label className="field">
             {W.login.email}
@@ -49,6 +61,33 @@ function Login({ onDone }: { onDone: (me: Me) => void }) {
           </label>
           <Button type="submit" disabled={busy}>{W.login.submit}</Button>
         </form>
+  );
+
+  return (
+    <main className="login">
+      <div className="login-card card">
+        <h1><Logo className="login-logo" /></h1>
+        <p className="login-note">{entry ? W.login.entryLead : `${W.login.lead}（${W.app.fictional}）`}</p>
+        <ErrorNotice message={error} />
+        {entry ? (
+          <>
+            <div className="stack">
+              <button type="button" className="pick" disabled={busy} onClick={() => enter("rep")}>
+                <span className="pick-name">{W.login.rep}</span>
+                <span className="muted">{W.login.repSub}</span>
+              </button>
+              <button type="button" className="pick" disabled={busy} onClick={() => enter("manager")}>
+                <span className="pick-name">{W.login.manager}</span>
+                <span className="muted">{W.login.managerSub}</span>
+              </button>
+            </div>
+            <p className="small login-note">{W.login.entryNote}</p>
+            <details>
+              <summary className="small">{W.login.byPassword}</summary>
+              <div style={{ marginTop: 12 }}>{form}</div>
+            </details>
+          </>
+        ) : form}
       </div>
     </main>
   );

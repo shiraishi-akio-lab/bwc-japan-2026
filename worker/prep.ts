@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { buildRecord, buyerPersona, confirmedResults, loadBuyer } from "./accounts";
 import { approvedCard, cardBody, DEMO_CARD_ID } from "./card";
-import { buyerOpening, buyerStaged, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, writeConsult, type BuyerMove, type Turn } from "./claude";
-import { buyerBriefText, confirmedPromises, prepBrief, prepPartner } from "./counterpart";
+import { buyerOpening, buyerStaged, INTENT_QUESTION, KEY_QUESTION, RETRY_LINE, ROUND_END_LINE, writeConsult, type BuyerMove, type Turn } from "./claude";
+import { buyerBriefText, confirmedPromises, loadInterests, practiceOccasion, PRACTICE_OCCASION, prepBrief, prepPartner } from "./counterpart";
+import world from "../data/world.json";
 import { cases } from "./data";
 import { companyCards } from "./manager";
 import { loadPos } from "./pos";
@@ -18,11 +19,11 @@ const MORE_CARDS = 2; // 固定のカードに添える、会社で承認され�
 
 export type Stage = "opening" | "asked" | "retry" | "refused" | "agreed" | "ended";
 type PrepRow = {
-  id: string; session_id: string; buyer_id: string; meeting_on: string; gain_answer: string; cause_hypothesis: string;
+  id: string; session_id: string; buyer_id: string; meeting_on: string; gain_answer: string; product_view: string; cause_hypothesis: string;
   returns_json: string; landing: string; stage: Stage; round_turns: number; consult_json: string; submitted_at: string;
   goal: string; occasion_id: string; reply_json: string;
 };
-const PREP_COLS = "id, session_id, buyer_id, meeting_on, gain_answer, cause_hypothesis, returns_json, landing, stage, round_turns, consult_json, submitted_at, goal, occasion_id, reply_json";
+const PREP_COLS = "id, session_id, buyer_id, meeting_on, gain_answer, product_view, cause_hypothesis, returns_json, landing, stage, round_turns, consult_json, submitted_at, goal, occasion_id, reply_json";
 
 export const loadTurns = async (db: D1Database, sessionId: string): Promise<Turn[]> => {
   const { results } = await db
@@ -57,6 +58,8 @@ const prepView = async (db: D1Database, p: PrepRow, me: SessionUser) => {
     occasionId: p.occasion_id,
     occasionName: await occasionName(db, p.occasion_id),
     gainAnswer: p.gain_answer,
+    productView: p.product_view,
+    product: { ...world.maker.product, ...world.product_sheet }, // product_sheet は若手の画面だけ。バイヤー役の指示文には入れない
     causeHypothesis: p.cause_hypothesis,
     returns: returnsOf(p),
     landing: p.landing,
@@ -71,7 +74,7 @@ const prepView = async (db: D1Database, p: PrepRow, me: SessionUser) => {
 // 相手と時期の下調べ。今の準備に書いた言葉を渡して、当てはまるものを絞る
 type Found = NonNullable<Awaited<ReturnType<typeof loadBuyer>>>;
 const briefOf = (db: D1Database, p: PrepRow, found: Found) =>
-  prepBrief(db, found.buyer, found.account, p.meeting_on, [p.gain_answer, ...returnsOf(p), p.landing].join("\n"));
+  prepBrief(db, found.buyer, found.account, p.meeting_on, [p.product_view, p.gain_answer, ...returnsOf(p), p.landing].join("\n"));
 
 // 確かめる係・次を決める係に渡すとき用：セッションから準備を引く
 export const briefOfSession = async (db: D1Database, sessionId: string, found: Found) => {
@@ -122,7 +125,7 @@ prepRoutes.get("/preps/:id", async (c) => {
   return c.json(await prepView(c.env.DB, p, c.get("user")));
 });
 
-type PrepBody = { goal?: string; occasionId?: string; gainAnswer?: string; causeHypothesis?: string; returns?: string[]; landing?: string };
+type PrepBody = { goal?: string; occasionId?: string; productView?: string; gainAnswer?: string; causeHypothesis?: string; returns?: string[]; landing?: string };
 const text = (s: string) => s.trim().slice(0, MAX_TEXT);
 
 // 書いた内容を残す。段階は画面から変えられない
@@ -132,17 +135,19 @@ prepRoutes.patch("/preps/:id", async (c) => {
   const b = await c.req.json<PrepBody>();
   const goal = b.goal === undefined ? p.goal : text(b.goal);
   const occasion = b.occasionId === undefined ? p.occasion_id : b.occasionId;
-  if (occasion !== p.occasion_id && !(await occasionName(c.env.DB, occasion))) return c.json({ error: "機会を選び直してください" }, 400);
+  // 止まる練習は定番の棚の入れ替えが前提なので、練習の機会だけを受ける
+  if (occasion !== p.occasion_id && occasion !== PRACTICE_OCCASION) return c.json({ error: "機会を選び直してください" }, 400);
   const gain = b.gainAnswer === undefined ? p.gain_answer : text(b.gainAnswer);
   const returns = JSON.stringify(b.returns ? b.returns.map(text).filter(Boolean).slice(0, MAX_RETURNS) : returnsOf(p));
   const landing = b.landing === undefined ? p.landing : text(b.landing);
   // 相談文の元が変わったら、古い1枚を残さない
   const stale = goal !== p.goal || occasion !== p.occasion_id || gain !== p.gain_answer || returns !== p.returns_json || landing !== p.landing;
   await c.env.DB.prepare(
-    "UPDATE preps SET goal = ?, occasion_id = ?, gain_answer = ?, cause_hypothesis = ?, returns_json = ?, landing = ?, consult_json = ?, submitted_at = ?, reply_json = ?, updated_at = datetime('now') WHERE id = ?",
+    "UPDATE preps SET goal = ?, occasion_id = ?, product_view = ?, gain_answer = ?, cause_hypothesis = ?, returns_json = ?, landing = ?, consult_json = ?, submitted_at = ?, reply_json = ?, updated_at = datetime('now') WHERE id = ?",
   ).bind(
     goal,
     occasion,
+    b.productView === undefined ? p.product_view : text(b.productView),
     gain,
     b.causeHypothesis === undefined ? p.cause_hypothesis : text(b.causeHypothesis),
     returns,
@@ -161,6 +166,7 @@ prepRoutes.get("/preps/:id/judgment", async (c) => {
   if (!p) return c.json({ error: "準備が見つかりません" }, 404);
   if (!p.goal.trim()) return c.json({ error: "先に、今回は何のために会うかを書いてください" }, 409);
   if (!p.gain_answer.trim()) return c.json({ error: "先に、相手の得は何かを書いてください" }, 409);
+  if (!p.product_view.trim()) return c.json({ error: "先に、新商品を自分の言葉で書いてください" }, 409);
   if (p.stage === "opening") return c.json({ error: "先に、バイヤーの問いを受けてください" }, 409);
   const found = await loadBuyer(c.env.DB, p.buyer_id, c.get("user").company_id);
   const shelf = await loadShelf(c.env.DB, found!.account.id);
@@ -181,6 +187,7 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
   if (!said || said.length > MAX_TEXT) return c.json({ error: `発言は1〜${MAX_TEXT}字で入力してください` }, 400);
   if (!p.goal.trim()) return c.json({ error: "先に、今回は何のために会うかを書いてください" }, 409);
   if (!p.gain_answer.trim()) return c.json({ error: "先に、相手の得は何かを書いてください" }, 409);
+  if (!p.product_view.trim()) return c.json({ error: "先に、新商品を自分の言葉で書いてください" }, 409);
   if (p.stage === "agreed" || p.stage === "ended") return c.json({ error: "この回は終わりです。答え直すか、相談文に進んでください" }, 409);
 
   const found = (await loadBuyer(db, p.buyer_id, c.get("user").company_id))!;
@@ -194,8 +201,9 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
   const agreed = p.stage === "refused" && agreementCondition(said, removable, returnsOf(p), p.landing, saidThisRound);
 
   let stage: Stage;
-  let move: BuyerMove | "question" | "closed";
-  if (p.stage === "opening") [stage, move] = ["asked", "question"];
+  let move: BuyerMove | "intent" | "question" | "closed";
+  if (p.stage === "opening" && repLines.length === 0) [stage, move] = ["opening", "intent"];
+  else if (p.stage === "opening") [stage, move] = ["asked", "question"];
   else if (p.stage === "retry") [stage, move] = ["refused", "refuse"];
   else if (agreed) [stage, move] = ["agreed", "agree"];
   else if (atLimit) [stage, move] = ["ended", "closed"];
@@ -203,7 +211,8 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
   else [stage, move] = ["refused", "hold"];
 
   let reply: string;
-  if (move === "question") reply = KEY_QUESTION;
+  if (move === "intent") reply = INTENT_QUESTION;
+  else if (move === "question") reply = KEY_QUESTION;
   else if (move === "closed") reply = ROUND_END_LINE;
   else {
     const key = c.env.ANTHROPIC_API_KEY;
@@ -221,7 +230,7 @@ prepRoutes.post("/preps/:id/turn", async (c) => {
   await db.batch([
     db.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, 'rep', ?)").bind(p.session_id, said),
     db.prepare("INSERT INTO practice_messages (session_id, role, content) VALUES (?, 'buyer', ?)").bind(p.session_id, reply),
-    db.prepare("UPDATE preps SET stage = ?, round_turns = ?, updated_at = datetime('now') WHERE id = ?").bind(stage, rounds, p.id),
+    db.prepare("UPDATE preps SET stage = ?, round_turns = ?, updated_at = datetime('now') WHERE id = ?").bind(stage, move === "intent" ? p.round_turns : rounds, p.id),
   ]);
   return c.json({ move, prep: await prepView(db, (await loadPrep(db, p.id, c.get("user")))!, c.get("user")) });
 });
@@ -275,14 +284,14 @@ prepRoutes.post("/preps/:id/consult/send", async (c) => {
   return c.json(await prepView(db, (await loadPrep(db, p.id, me))!, me));
 });
 
-// 相手と時期の下調べ：承認済みの関心・確定した商談の傾向・商談日から見た行事だけを返す
+// 相手と時期の下調べ：読んだ関心の全部・確定した商談の傾向・商談日から見た行事を返す
 prepRoutes.get("/preps/:id/brief", async (c) => {
   const p = await loadPrep(c.env.DB, c.req.param("id"), c.get("user"));
   if (!p) return c.json({ error: "準備が見つかりません" }, 404);
   const found = await loadBuyer(c.env.DB, p.buyer_id, c.get("user").company_id);
   if (!found) return c.json({ error: "準備が見つかりません" }, 404);
-  // POS は画面にだけ返す。Claude への入力（briefOf の先）には入れない
-  return c.json({ ...(await briefOf(c.env.DB, p, found)), pos: await loadPos(c.env.DB, found.account.id, p.meeting_on) });
+  // 関心の全部と POS は画面にだけ返す。Claude への入力（briefOf の先）は絞ったまま
+  return c.json({ ...(await briefOf(c.env.DB, p, found)), interests: await loadInterests(c.env.DB, found.account.id), pos: await loadPos(c.env.DB, found.account.id, p.meeting_on), practice: await practiceOccasion(c.env.DB, p.meeting_on) });
 });
 
 // 相手の情報：どの段階からでも開く1枚。本人の準備の相手の分だけを返す

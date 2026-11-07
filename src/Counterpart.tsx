@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./api";
 import { Button, Card, Empty, ErrorNotice, Facts, Sub, Tag, Title, Waiting } from "./ui";
-import { W } from "./words";
+import { sourceKind, W } from "./words";
 
 // 相手の棚：企業の関心・担当者の傾向・ことカレンダー
 type Interest = {
@@ -12,10 +12,11 @@ type Observation = { id: string; tendency: string; keywords: string[]; basis: st
 type SeasonEvent = { id: string; name: string; month: number; day: number; deadline_month: number; deadline_day: number; store_action: string; proposal: string; own_result: string };
 type DatedEvent = SeasonEvent & { event_on: string; deadline_on: string };
 type PosWeek = { week_on: string; units: number; ly_units: number };
-type PosSeries = { id: string; name: string; own: boolean; weeks: PosWeek[]; avg_units: number; yoy_pct: number; before_units: number; after_units: number };
+type PosSeries = { id: string; name: string; own: boolean; weeks: PosWeek[]; avg_units: number; yoy_pct: number; before_units: number; after_units: number; autumn_before_units: number; autumn_after_units: number };
 type Pos = {
   title: string; fetched_on: string; revised_on: string; from_on: string; to_on: string;
-  before_from: string; before_to: string; after_from: string; after_to: string; series: PosSeries[];
+  before_from: string; before_to: string; after_from: string; after_to: string;
+  autumn_on: string; autumn_before_from: string; autumn_before_to: string; autumn_after_from: string; autumn_after_to: string; series: PosSeries[];
 };
 type Brief = { interests: Interest[]; observations: Observation[]; events: DatedEvent[]; pos: Pos | null };
 type Partner = Brief & { promises: { text: string; due: string }[]; meetings: { held_on: string; kind: string; summary: string; decisions: string[] }[] };
@@ -24,13 +25,13 @@ type OnError = (m: string | null) => void;
 
 // 出どころと日付はいつも一緒に見せる
 const sourceRows = (i: Interest): [string, React.ReactNode][] => [
-  [W.brief.source, <a href={i.source_url} target="_blank" rel="noreferrer">{i.source_title || i.source_url}</a>],
+  [W.brief.source, <>{sourceKind(i.source_url, i.source_title)}｜<a href={i.source_url} target="_blank" rel="noreferrer">{i.source_title || i.source_url}</a></>],
   [W.brief.published, i.published_on || W.brief.noPublished],
   [W.brief.fetched, i.fetched_on],
   [W.brief.basis, i.basis],
 ];
 
-// 取引先の画面と下調べ：公開情報は誰でも読み、読んだ人が出どころを見て確かめる。未確認は AI にも準備室にも渡らない
+// 取引先の画面と下調べ：公開情報は誰でも読める。読んだ関心は出どころつきで全部出す
 export function InterestsPanel({ accountId, siteUrl, onError, onChange, reading = false }: { accountId: string; siteUrl: string; onError: OnError; onChange?: () => void; reading?: boolean }) {
   const [rows, setRows] = useState<Interest[]>([]);
   const [url, setUrl] = useState(siteUrl);
@@ -48,35 +49,22 @@ export function InterestsPanel({ accountId, siteUrl, onError, onChange, reading 
     try {
       setRead(await call<Read>(`/api/accounts/${accountId}/read-site`, "POST", { url }));
       await load();
+      onChange?.();
     } catch (e) {
       onError((e as Error).message);
     } finally {
       setBusy(false);
     }
   };
-  const judge = (id: string, status: string) => call(`/api/interests/${id}`, "POST", { status }).then(load).then(() => onChange?.()).catch((e: Error) => onError(e.message));
-  const approved = rows.filter((r) => r.status === "approved");
-  const pending = rows.filter((r) => r.status === "pending");
 
   return (
     <>
       {!reading && <Title size="mid">{W.interests.title}</Title>}
       {!reading && <p className="muted">{W.interests.lead}</p>}
       {!reading && rows.length === 0 && <Empty>{W.state.noData}</Empty>}
-      {pending.length > 0 && <Sub>{W.interests.candidates}</Sub>}
-      {pending.map((i) => (
+      {!reading && rows.map((i) => (
         <div key={i.id} className="box">
-          <div className="row"><Tag kind="wait">{W.interests.unchecked}</Tag><strong>{i.text}</strong></div>
-          <Facts two rows={sourceRows(i)} />
-          <div className="row">
-            <Button small onClick={() => judge(i.id, "approved")}>{W.interests.approve}</Button>
-            <Button small ghost onClick={() => judge(i.id, "rejected")}>{W.interests.reject}</Button>
-          </div>
-        </div>
-      ))}
-      {!reading && approved.map((i) => (
-        <div key={i.id} className="box">
-          <div className="row"><Tag kind="ok">{W.interests.used}</Tag><strong>{i.text}</strong></div>
+          <strong>{i.text}</strong>
           <Facts two rows={sourceRows(i)} />
         </div>
       ))}
@@ -181,6 +169,32 @@ function PosChart({ s }: { s: PosSeries }) {
 }
 
 // 店頭の販売実績。売場全体と自社品だけ。順に意味を持たせない（並びは品の id の順で、売れ行きの順にしない）
+// 棚割り改定の前後の表。秋と3月で同じ形を使う
+function RevisionTable({ pos, on, range, units }: { pos: Pos; on: string; range: [string, string, string, string]; units: (s: PosSeries) => [number, number] }) {
+  const span = (from: string, to: string) => `${monthDay(from)}〜${monthDay(to)}`;
+  return (
+    <>
+      <Sub>{W.pos.revision(`${on.slice(0, 4)}年${Number(on.slice(5, 7))}月`)}</Sub>
+      <div className="scroll-x">
+        <table>
+          <thead>
+            <tr>{W.pos.revisionCols(span(range[0], range[1]), span(range[2], range[3])).map((h, i) => <th key={i} className={i ? "num" : undefined}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {pos.series.map((s) => (
+              <tr key={s.id}>
+                <td>{seriesName(s)} {s.own && <Tag kind="step">{W.tag.own}</Tag>}</td>
+                <td className="num">{W.pos.unit(units(s)[0])}</td>
+                <td className="num">{W.pos.unit(units(s)[1])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 function PosCard({ pos }: { pos: Pos | null }) {
   if (!pos) {
     return (
@@ -190,13 +204,10 @@ function PosCard({ pos }: { pos: Pos | null }) {
       </Card>
     );
   }
-  const revised = `${pos.revised_on.slice(0, 4)}年${Number(pos.revised_on.slice(5, 7))}月`;
-  const before = `${monthDay(pos.before_from)}〜${monthDay(pos.before_to)}`;
-  const after = `${monthDay(pos.after_from)}〜${monthDay(pos.after_to)}`;
   return (
     <Card>
       <div className="row"><Tag kind="soft">{W.pos.label}</Tag><Tag kind="line">{W.pos.fictional}</Tag></div>
-      <h3 className="item">{W.pos.title}</h3>
+      <h3 className="item">{W.pos.title(monthDay(pos.from_on))}</h3>
       <div className="pos-legend" aria-hidden="true">
         <span><svg viewBox="0 0 28 8"><path className="pos-now" d="M0 4H28" /></svg>{W.pos.now}</span>
         <span><svg viewBox="0 0 28 8"><path className="pos-ly" d="M0 4H28" /></svg>{W.pos.lastYear}</span>
@@ -221,23 +232,8 @@ function PosCard({ pos }: { pos: Pos | null }) {
           </table>
         </div>
       </details>
-      <Sub>{W.pos.revision(revised)}</Sub>
-      <div className="scroll-x">
-        <table>
-          <thead>
-            <tr>{W.pos.revisionCols(before, after).map((h, i) => <th key={i} className={i ? "num" : undefined}>{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {pos.series.map((s) => (
-              <tr key={s.id}>
-                <td>{seriesName(s)} {s.own && <Tag kind="step">{W.tag.own}</Tag>}</td>
-                <td className="num">{W.pos.unit(s.before_units)}</td>
-                <td className="num">{W.pos.unit(s.after_units)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <RevisionTable pos={pos} on={pos.autumn_on} range={[pos.autumn_before_from, pos.autumn_before_to, pos.autumn_after_from, pos.autumn_after_to]} units={(s) => [s.autumn_before_units, s.autumn_after_units]} />
+      <RevisionTable pos={pos} on={pos.revised_on} range={[pos.before_from, pos.before_to, pos.after_from, pos.after_to]} units={(s) => [s.before_units, s.after_units]} />
       <p className="small">{W.pos.revisionNote}</p>
       <Facts two rows={[[W.pos.source, pos.title], [W.pos.period, `${monthDay(pos.from_on)}〜${monthDay(pos.to_on)}`], [W.pos.fetched, pos.fetched_on]]} />
     </Card>
@@ -256,7 +252,7 @@ function BriefCards({ brief }: { brief: Brief }) {
       )}
       {brief.interests.map((i) => (
         <Card key={i.id}>
-          <div className="row"><Tag kind="soft">{W.brief.interest}</Tag><Tag kind="ok">{W.interests.used}</Tag></div>
+          <div><Tag kind="soft">{W.brief.interest}</Tag></div>
           <h3 className="item">{i.text}</h3>
           <Facts two rows={sourceRows(i)} />
         </Card>

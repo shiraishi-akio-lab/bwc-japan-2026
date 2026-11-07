@@ -8,9 +8,10 @@ import path from "node:path";
 import { getPlatformProxy } from "wrangler";
 import { DAY_LIMITS, RULES, type Rule } from "../worker/access";
 import { buildRecord, loadBuyer } from "../worker/accounts";
-import { LOGIN_LIMITS, sessionCookie } from "../worker/auth";
+import { demoEntryOn, LOGIN_LIMITS, sessionCookie } from "../worker/auth";
 import { approvedCard } from "../worker/card";
-import { groundInterests, KEY_QUESTION } from "../worker/claude";
+import { groundInterests, INTENT_QUESTION, KEY_QUESTION } from "../worker/claude";
+import { sourceKind } from "../src/words";
 import { buyerBriefText, coachBriefText, prepBrief, READS_PER_HOUR, selectEvents, selectInterests, selectObservations, type Interest, type Observation, type SeasonEvent } from "../worker/counterpart";
 import { assertPublicUrl, crawl, isBlockedAddress, makeOpener, parseHtml, readPage, resolveInput, robotsAllows, SITE_LIMITS, SiteError, type Opener } from "../worker/site";
 import { agreementCondition, shelfCandidates, type ShelfItem } from "../worker/shelf";
@@ -32,7 +33,8 @@ const SHELF_NAMES = ["塩レモン", "ジンジャーエール", "無糖レモ�
 
 const SCRIPT = {
   goal: "3月の棚割り改定で、和ハーブ炭酸を8店舗で試す約束をもらうために会う",
-  occasion: "ev-school",
+  occasion: "ev-march-shelf",
+  product: "健康を気にして甘い飲み物を控える人に、無糖で国産ハーブの香りがあるから選ばれる",
   gain: "棚全体の回転が上がり、健康の売場で来店が増えること",
   pitch: `${PRACTICE_MARK}で、和ハーブ炭酸は、国産ハーブと地元の水で作った無糖の炭酸です。3月の棚割りに入れていただきたいです`,
   returns: ["弊社の塩レモン炭酸を外して、和ハーブ炭酸を入れる", "8店舗で3か月だけ試して、数字で判断してもらう"],
@@ -44,7 +46,7 @@ const SCRIPT = {
 
 type Turn = { role: "rep" | "buyer"; content: string };
 type Prep = {
-  id: string; sessionId: string; meetingOn: string; goal: string; occasionName: string; gainAnswer: string; returns: string[]; landing: string; stage: string; turns: Turn[];
+  id: string; sessionId: string; meetingOn: string; goal: string; occasionName: string; productView: string; product: { name: string; features: string[]; target: string; category: string }; gainAnswer: string; returns: string[]; landing: string; stage: string; turns: Turn[];
   consult: { returns: string[]; landing: string; summary: string; concessions: string[]; asks: string[] } | null;
 };
 type Recap = { promises: { text: string }[]; results: { initiative: string; result: string; outcome: string }[]; askCause: boolean };
@@ -120,7 +122,14 @@ for (const f of fs.readdirSync(path.join(ROOT, "worker")).filter((n) => n.endsWi
 }
 const listed = new Set(RULES.map((r) => `${r.method} ${r.path}`));
 ok(defined.size === listed.size && [...defined].every((d) => listed.has(d)), "棚卸し表とルートの定義が一致する", `${defined.size}本 ${[...defined].filter((d) => !listed.has(d)).join()} ${[...listed].filter((d) => !defined.has(d)).join()}`);
-ok(RULES.filter((r) => r.allow === "public").map((r) => `${r.method} ${r.path}`).join() === "GET /api/health,POST /api/login", "認証なしで通るのはログインと health だけ");
+ok(RULES.filter((r) => r.allow === "public").map((r) => `${r.method} ${r.path}`).join() === "GET /api/health,POST /api/login,GET /api/demo-entry,POST /api/demo-entry", "認証なしで通るのはログイン、入口のボタン、health だけ");
+// 入口の2つのボタン：手元以外は明示したときだけ。入れるのは架空の2人だけ
+ok(!demoEntryOn("https://bwc.example.workers.dev/api/demo-entry") && !demoEntryOn("https://bwc.example.workers.dev/api/demo-entry", "off") && demoEntryOn("https://bwc.example.workers.dev/api/demo-entry", "on") && demoEntryOn(`${BASE}/api/demo-entry`), "入口のボタンは手元以外では既定で閉じている");
+const entryRep = await send<{ role?: string; email?: string }>("POST", "/demo-entry", { body: { role: "rep" } });
+const entryMgr = await send<{ role?: string; email?: string }>("POST", "/demo-entry", { body: { role: "manager" } });
+ok(entryRep.status === 200 && entryRep.body.role === "rep" && entryRep.body.email === creds.rep.email && entryMgr.status === 200 && entryMgr.body.role === "manager" && entryMgr.body.email === creds.manager.email, "入口のボタンで担当者と上司に入れる");
+ok((await send("POST", "/demo-entry", { body: { role: "admin" } })).status === 400 && (await send("POST", "/demo-entry", { body: {} })).status === 400, "入口のボタンは決まった2人にしか入れない");
+ok((await send("POST", "/demo-entry", { body: { role: "rep" }, origin: "https://evil.example" })).status === 403, "別のオリジンから入口のボタンは使えない");
 // Claude を呼ぶ入口に上限が付いている。書き換えのルートを定義の範囲ごとに読む
 const unlimited: string[] = [];
 for (const f of fs.readdirSync(path.join(ROOT, "worker")).filter((n) => n.endsWith(".ts"))) {
@@ -308,11 +317,12 @@ ok(selectInterests([row("a", "健康", "2026-01-01", "pending"), row("b", "健�
 ok(selectInterests([row("a", "その他", "2026-10-01"), row("b", "健康", "2025-01-01"), row("c", "健康", "2026-12-01")], "2026-11-12").length === 0, "棚に結びつかない・古すぎる・商談の後の日付は選ばない");
 ok(selectInterests(["1", "2", "3", "4"].map((d) => row(d, "健康", `2026-10-0${d}`)), "2026-11-12").map((i) => i.id).join() === "4,3,2", "新しい順に3件まで");
 ok(selectInterests([row("undated", "健康", ""), row("dated", "健康", "2026-03-01")], "2026-11-12").map((i) => i.id).join() === "dated,undated", "掲載日の読めないものは新着に見せない");
+ok(sourceKind("/sample-site/harukaze/ir/2026-q2.html", "") === "決算発表" && sourceKind("/sample-site/harukaze/news/a.html", "") === "ニュースリリース" && sourceKind("/sample-site/harukaze/torikumi/a.html", "") === "取り組み" && sourceKind("/about.html", "会社案内") === "公開ページ", "出どころの種類を、ページの場所と題から分ける");
 const titled = { interests: [{ ...row("t", "健康", ""), text: "本文", source_title: "題に書いた文" }], observations: [], events: [] };
 ok(!coachBriefText(titled).includes("題に書いた文") && !buyerBriefText(titled).includes("題に書いた文") && coachBriefText(titled).includes("掲載日不明"), "ページの題は Claude への入力に入れず、日付が無ければそう書く");
 const obs = (id: string, keywords: string[], held_on: string) => ({ id, keywords, held_on }) as Observation;
 ok(selectObservations([obs("a", ["棚"], "2026-10-01"), obs("b", ["手間"], "2026-01-01"), obs("c", ["数字"], "2026-02-01")], "店の手間").map((o) => o.id).join() === "b,a", "傾向は準備の言葉と重なるものを先に2件まで");
-const seasonRows = (await db.prepare("SELECT * FROM season_events").all<SeasonEvent>()).results;
+const seasonRows = (await db.prepare("SELECT * FROM season_events WHERE id != 'ev-march-shelf'").all<SeasonEvent>()).results;
 const eventsOn = (d: string) => selectEvents(seasonRows, d).map((e) => e.name).join("→");
 // 期待値は手で書く
 ok(seasonRows.length >= 12, "ことカレンダーに1年分ある", `${seasonRows.length}件`);
@@ -345,14 +355,20 @@ async function practiceRun(n: number): Promise<boolean> {
   ok((await call("GET", `/preps/${id}/judgment`)).status === 409, "目的を書く前には判断を返さない");
   ok((await call("POST", `/preps/${id}/turn`, { text: "話します" })).status === 409, "目的を書く前には話せない");
   ok((await call("PATCH", `/preps/${id}`, { occasionId: "ev-none" })).status === 400, "無い機会は選べない");
+  ok((await call("PATCH", `/preps/${id}`, { occasionId: "ev-setsubun" })).status === 400 && (await call("PATCH", `/preps/${id}`, { occasionId: "ev-school" })).status === 400, "行事は練習に選べない");
   await call("PATCH", `/preps/${id}`, { goal: SCRIPT.goal, occasionId: SCRIPT.occasion });
   const { body: reread } = await call<Prep>("GET", `/preps/${id}`);
   await call("PATCH", `/preps/${id}`, { returns: [SCRIPT.returns[0]], landing: "" });
   const partial = (await call<Prep>("GET", `/preps/${id}`)).body;
-  ok(reread.goal === SCRIPT.goal && reread.occasionName === "新入学・新生活" && reread.gainAnswer === SCRIPT.gain && reread.meetingOn === "2026-11-12" && partial.returns.join() === SCRIPT.returns[0] && partial.stage === "opening", "読み直しても準備の内容が残る（書きかけの返しと段階も）");
+  ok(reread.goal === SCRIPT.goal && reread.occasionName === "3月の棚割り" && reread.gainAnswer === SCRIPT.gain && reread.meetingOn === "2026-11-12" && partial.returns.join() === SCRIPT.returns[0] && partial.stage === "opening", "読み直しても準備の内容が残る（書きかけの返しと段階も）");
   ok((await call("GET", `/preps/${id}/judgment`)).status === 409, "問いを受ける前は候補を返さない");
 
   // 固定の問い
+  ok((await call("POST", `/preps/${id}/turn`, { text: "話します" })).status === 409, "新商品を書く前には話せない");
+  const viewed = await call<Prep>("PATCH", `/preps/${id}`, { productView: SCRIPT.product });
+  ok(viewed.body.productView === SCRIPT.product && viewed.body.product.name.includes("和ハーブ炭酸") && viewed.body.product.features.includes("無糖") && viewed.body.product.target.includes("30〜50代") && viewed.body.product.category.includes("無糖炭酸"), "新商品の事実と本人の言葉が返る");
+  const opened = await call<{ move: string; prep: Prep }>("POST", `/preps/${id}/turn`, { text: "ご提案をさせてください。" });
+  ok(opened.body.prep.turns.at(-1)?.content === INTENT_QUESTION && opened.body.move === "intent" && opened.body.prep.stage === "opening", "最初の発言には「どうしたいの？」が返る", opened.body.prep.turns.at(-1)?.content);
   const asked = await call<{ move: string; prep: Prep }>("POST", `/preps/${id}/turn`, { text: SCRIPT.pitch });
   const q = asked.body.prep.turns.at(-1)?.content;
   ok(q === KEY_QUESTION && asked.body.move === "question", "「どれを外すの？」が出る", q);
@@ -472,7 +488,8 @@ ok((await call("POST", `/preps/${empty.id}/consult`)).status === 400, "返しが
 // 問いのあとで止まり続けても詰まらない
 console.log("\n■ 問いのあとに話し続ける");
 const { body: stuck } = await call<Prep>("POST", "/preps", { buyerId: BUYER, meetingOn: "2026-11-12" });
-await call("PATCH", `/preps/${stuck.id}`, { goal: SCRIPT.goal, gainAnswer: SCRIPT.gain, returns: SCRIPT.returns, landing: SCRIPT.landing });
+await call("PATCH", `/preps/${stuck.id}`, { goal: SCRIPT.goal, productView: SCRIPT.product, gainAnswer: SCRIPT.gain, returns: SCRIPT.returns, landing: SCRIPT.landing });
+await call("POST", `/preps/${stuck.id}/turn`, { text: "ご提案をさせてください。" });
 let lastStuck = await call<{ move: string; prep: Prep }>("POST", `/preps/${stuck.id}/turn`, { text: SCRIPT.pitch });
 for (let i = 0; i < 5 && lastStuck.body.prep.stage === "asked"; i++) {
   lastStuck = await call("POST", `/preps/${stuck.id}/turn`, { text: SCRIPT.stuck });
@@ -500,7 +517,7 @@ ok(leaks(read.raw).length === 0, "読み取りの応答にバイヤーだけの�
 const candidates = (await call<Interest[]>("GET", `/accounts/${ACCOUNT}/interests`, undefined, mgr)).body;
 ok((await call<Interest[]>("GET", `/accounts/${ACCOUNT}/interests`)).body.length === candidates.length, "公開情報の候補は若手も見られる");
 for (const c of candidates) console.log(`    候補：[${c.theme}] ${c.text}（${c.published_on || "日付なし"}・${c.source_url}）`);
-ok(candidates.length > 0 && candidates.every((c) => c.status === "pending"), "候補はすべて未承認から始まる");
+ok(candidates.length > 0 && candidates.every((c) => c.status === "approved"), "読んだ関心は、選ばなくてもそのまま使える");
 ok(candidates.every((c) => c.source_url.startsWith(SAMPLE) && !!c.source_title && !!c.fetched_on), "候補に出どころの URL と題と取得日がある");
 const isDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 ok(candidates.every((c) => isDay(c.fetched_on) && (c.published_on === "" || isDay(c.published_on))) && candidates.some((c) => isDay(c.published_on)), "候補に日付がある（読めないページは取得日だけで、作らない）");
@@ -526,36 +543,23 @@ for (const url of ["http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/
 const ghost = await call<{ error?: string }>("POST", `/accounts/${ACCOUNT}/read-site`, { url: `${BASE}/sample-site/none/index.html` }, mgr);
 ok(ghost.status === 400, "見本に無いパス（SPA の殻）は読まない", ghost.body.error);
 
-const usable = candidates.filter((c) => c.theme !== "その他");
-const [approve, hold, reject] = usable;
-ok(!!approve && !!hold && !!reject, "確かめに使う候補がある", `${usable.length}件`);
 const inputs = async () => {
   const f = (await loadBuyer(db, BUYER, COMPANY))!;
   const b = await prepBrief(db, f.buyer, f.account, "2026-11-12");
-  return { buyer: buyerBriefText(b), coach: coachBriefText(b) };
+  return { buyer: buyerBriefText(b), coach: coachBriefText(b), picked: b.interests };
 };
-const pendingBrief = await call<Brief>("GET", `/preps/${briefPrep.id}/brief`);
-const pendingInput = await inputs();
-ok(candidates.every((c) => !pendingBrief.raw.includes(c.text)), "未承認は準備室に出ない");
-ok(candidates.every((c) => !pendingInput.coach.includes(c.text) && !pendingInput.buyer.includes(c.text)), "未承認は Claude への入力に出ない");
-
-ok((await call("POST", `/interests/${approve.id}`, { status: "maybe" }, mgr)).status === 400, "承認か見送り以外は受けない");
-await call("POST", `/interests/${approve.id}`, { status: "approved" }, mgr);
-await call("POST", `/interests/${reject.id}`, { status: "rejected" }, mgr);
 const afterBrief = await call<Brief>("GET", `/preps/${briefPrep.id}/brief`);
 const afterInput = await inputs();
-ok(afterBrief.body.interests.map((i) => i.id).join() === approve.id, "承認すると準備室に出る", afterBrief.body.interests[0]?.text);
-ok(afterInput.coach.includes(approve.text) && afterInput.buyer.includes(approve.text), "承認すると Claude への入力に入る");
-ok(!afterBrief.raw.includes(hold.text) && !afterInput.coach.includes(hold.text), "承認していない候補は出ないまま");
-ok(!afterInput.coach.includes(reject.text) && !(await call("GET", `/accounts/${ACCOUNT}/interests`, undefined, mgr)).raw.includes(reject.text), "見送りは一覧にも入力にも出ない");
+const readAll = (await call<Interest[]>("GET", `/accounts/${ACCOUNT}/interests`, undefined, mgr)).body; // 読み直しで、候補の無かったページの分が増えることがある
+ok(afterBrief.body.interests.length === readAll.length, "下調べには読んだ関心が全部出る", `${afterBrief.body.interests.length}件`);
+ok(afterInput.picked.length > 0 && afterInput.picked.length <= 3, "Claude に渡す関心は3件まで", `${afterInput.picked.length}件`);
+ok(afterInput.picked.every((i) => afterInput.coach.includes(i.text) && afterInput.buyer.includes(i.text)), "絞った関心は Claude への入力に入る");
+ok(readAll.filter((c) => !afterInput.picked.some((i) => i.id === c.id)).every((c) => !afterInput.coach.includes(c.text)), "絞られた関心は画面にだけ出て、Claude には渡らない");
+ok((await call("POST", `/interests/${candidates[0].id}`, { status: "rejected" }, mgr)).status !== 200, "使う・使わないの入口はもう無い");
 const repInterests = await call<Interest[]>("GET", `/accounts/${ACCOUNT}/interests`);
-ok(repInterests.raw.includes(hold.text) && !repInterests.raw.includes(reject.text), "若手の一覧にも未確認は出て、使わないものは出ない");
+ok(repInterests.body.length === readAll.length, "若手の一覧にも全部出る");
 const repRead = await call<{ added: number }>("POST", `/accounts/${ACCOUNT}/read-site`, { url: `${BASE}${SAMPLE}index.html` });
 ok(repRead.status === 200, "若手も公開情報を読める", `HTTP ${repRead.status}`);
-const usedByRep = await call("POST", `/interests/${hold.id}`, { status: "approved" });
-const repUsedBrief = await call<Brief>("GET", `/preps/${briefPrep.id}/brief`);
-ok(usedByRep.status === 200 && repUsedBrief.raw.includes(hold.text), "若手が「使う」を押すと準備室に出る", repUsedBrief.body.interests.map((i) => i.text).join("／"));
-await db.prepare("UPDATE company_interests SET status = 'pending' WHERE id = ?").bind(hold.id).run();
 
 // 担当者の傾向とことカレンダー
 console.log("\n■ 相手の棚：傾向と行事");
@@ -609,6 +613,8 @@ ok(!!pos && pos.series[0].yoy_pct < 100, "売場全体は前年を下回って�
 // 前回の改定の前後の期待値は手で書く（同じ関数を通さない）
 ok(pos?.series.map((x) => `${x.before_units}→${x.after_units}`).join() === "297→319,16→15,28→30", "前回の3月の改定の前後の週販が見本どおり", pos?.series.map((x) => `${x.before_units}→${x.after_units}`).join("／"));
 
+ok(pos?.series.map((x) => `${x.autumn_before_units}→${x.autumn_after_units}`).join() === "324→317,17→15,34→33" && pos?.autumn_before_from === "2026-08-10" && pos?.autumn_after_to === "2026-10-04", "秋の改定の前後の週販が見本どおり", pos?.series.map((x) => `${x.autumn_before_units}→${x.autumn_after_units}`).join());
+
 // 他社品の行があっても読まないこと：一度入れて確かめ、消す
 await db.prepare("INSERT OR REPLACE INTO pos_weekly (account_id, item_id, period, week_on, units, ly_units) VALUES (?, ?, 'recent', '2026-10-26', 999, 999)").bind(ACCOUNT, others[0].id).run();
 const planted = await call<{ pos: Pos | null }>("GET", `/preps/${briefPrep.id}/brief`);
@@ -623,7 +629,7 @@ for (const [label, raw] of [["下調べ", posBrief.raw], ["相手の情報", par
 }
 const asked = await call<Partner>("GET", `/preps/${stuck.id}/partner`);
 ok(asked.status === 200 && otherLeaks(asked.raw).length === 0, "問いを受けたあとでも、相手の情報に棚の表は出ない");
-ok(pb.interests.map((i) => i.id).join() === approve.id && !partner.raw.includes(hold.text) && !partner.raw.includes(reject.text), "相手の情報の関心は承認済みだけ");
+ok(pb.interests.length === (await call<Interest[]>("GET", `/accounts/${ACCOUNT}/interests`, undefined, mgr)).body.length, "相手の情報には読んだ関心が全部出る", `${pb.interests.length}件`);
 ok(pb.observations.length === 3, "相手の情報には確定した商談の傾向が全部出る", `${pb.observations.length}件`);
 ok(pb.promises.some((p) => p.text.includes("3月の棚割り")), "相手の情報に前回の約束が出る");
 ok(pb.meetings.map((m) => m.held_on).join() === "2026-10-08,2026-09-10", "商談の記録は確定した分だけが新しい順に出る", pb.meetings.map((m) => m.held_on).join("→"));
@@ -673,7 +679,7 @@ const meetingId = (await db.prepare("SELECT id FROM meetings WHERE buyer_id = ? 
 const priorityId = (await db.prepare("SELECT id FROM priorities WHERE buyer_id = ? LIMIT 1").bind(BUYER).first<{ id: string }>())!.id;
 const promiseId = (await db.prepare("SELECT p.id FROM promises p JOIN meetings m ON m.id = p.meeting_id WHERE m.buyer_id = ? LIMIT 1").bind(BUYER).first<{ id: string }>())!.id;
 const realId = (r: Rule) => {
-  for (const [prefix, id] of [["/api/preps/", prepId], ["/api/consults/", prepId], ["/api/practice/", sessionId], ["/api/accounts/", ACCOUNT], ["/api/buyers/", BUYER], ["/api/meetings/", meetingId], ["/api/priorities/", priorityId], ["/api/promises/", promiseId], ["/api/interests/", approve.id]] as const) {
+  for (const [prefix, id] of [["/api/preps/", prepId], ["/api/consults/", prepId], ["/api/practice/", sessionId], ["/api/accounts/", ACCOUNT], ["/api/buyers/", BUYER], ["/api/meetings/", meetingId], ["/api/priorities/", priorityId], ["/api/promises/", promiseId]] as const) {
     if (r.path.startsWith(prefix)) return id;
   }
   return "x";

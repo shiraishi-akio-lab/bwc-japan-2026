@@ -6,7 +6,7 @@ import { loadPos, type Pos } from "./pos";
 import { assertPublicUrl, crawl, isSamplePage, makeOpener, resolveInput, SiteError } from "./site";
 import type { AppEnv, InterestTheme } from "./types";
 
-// 相手の棚：企業の関心（公開情報を読み、読んだ本人が確かめる）・担当者の傾向（読むだけ）・ことカレンダー（読むだけ）
+// 相手の棚：企業の関心（公開情報を読み、原文で確かめられた内容を出どころつきで出す）・担当者の傾向（読むだけ）・ことカレンダー（読むだけ）
 export type Interest = {
   id: string; account_id: string; text: string; basis: string; theme: InterestTheme; source_url: string; source_title: string;
   published_on: string; fetched_on: string; status: "pending" | "approved" | "rejected";
@@ -28,7 +28,7 @@ export const READS_PER_HOUR = 20; // 公開情報の読み取りは1人1時間�
 
 const datedOn = (i: Interest) => i.published_on || i.fetched_on;
 
-// 準備室に出す関心：承認済みで、棚の提案に結びつく種類で、商談日から見て古すぎないものを新しい順に
+// Claude に渡す関心：棚の提案に結びつく種類で、商談日から見て古すぎないものを新しい順に。画面には全部出す
 export const selectInterests = (rows: Interest[], meetingOn: string): Interest[] =>
   rows
     .filter((i) => i.status === "approved" && i.theme !== "その他")
@@ -83,8 +83,17 @@ export const confirmedObservations = async (db: D1Database, buyerId: string): Pr
   return results.map(({ keywords_json, ...o }) => ({ ...o, keywords: JSON.parse(keywords_json) as string[] }));
 };
 
+const EVENT_COLS = "id, name, month, day, deadline_month, deadline_day, store_action, proposal, own_result";
+export const PRACTICE_OCCASION = "ev-march-shelf"; // 止まる練習で選べる機会。行事ではないので、行事の一覧には入れない
+
 export const loadEvents = async (db: D1Database) =>
-  (await db.prepare("SELECT id, name, month, day, deadline_month, deadline_day, store_action, proposal, own_result FROM season_events ORDER BY month, day").all<SeasonEvent>()).results;
+  (await db.prepare(`SELECT ${EVENT_COLS} FROM season_events WHERE id != ? ORDER BY month, day`).bind(PRACTICE_OCCASION).all<SeasonEvent>()).results;
+
+// 商談日から間に合うときだけ返す
+export const practiceOccasion = async (db: D1Database, meetingOn: string): Promise<DatedEvent | null> => {
+  const row = await db.prepare(`SELECT ${EVENT_COLS} FROM season_events WHERE id = ?`).bind(PRACTICE_OCCASION).first<SeasonEvent>();
+  return (row && selectEvents([row], meetingOn)[0]) ?? null;
+};
 
 export type Brief = { interests: Interest[]; observations: Observation[]; events: DatedEvent[] };
 
@@ -116,7 +125,7 @@ export async function prepPartner(db: D1Database, buyer: Buyer, account: Account
     db.prepare("SELECT held_on, kind, summary, decisions_json FROM meetings WHERE buyer_id = ? AND status = 'confirmed' ORDER BY held_on DESC").bind(buyer.id).all<MeetingRow>(),
   ]);
   return {
-    interests: selectInterests(interests, meetingOn),
+    interests,
     observations,
     events: selectEvents(events, meetingOn),
     pos,
@@ -138,7 +147,7 @@ export const buyerBriefText = (b: Brief) =>
 // 確かめる係・次を決める係に渡す分
 export const coachBriefText = (b: Brief) =>
   [
-    ...(b.interests.length ? ["公開情報から人が確かめた相手の関心：", ...interestLines(b)] : []),
+    ...(b.interests.length ? ["公開情報から読んだ相手の関心：", ...interestLines(b)] : []),
     ...(b.observations.length ? ["商談で観察された傾向：", ...b.observations.map((o) => `- ${o.tendency}（${o.held_on}・${o.basis}）`)] : []),
     ...(b.events.length
       ? ["時期（提案の締切が先のもの）：", ...b.events.map((e) => `- ${e.name}（締切の目安 ${e.deadline_on}）：店の動き ${e.store_action}／提案 ${e.proposal}／自社の過去の実績 ${e.own_result}`)]
@@ -147,7 +156,7 @@ export const coachBriefText = (b: Brief) =>
 
 export const counterpartRoutes = new Hono<AppEnv>();
 
-// 公開情報なので、候補も会社の全員が見る。準備室と Claude に渡すのは、人が確かめたものだけ
+// 公開情報なので、会社の全員が見る
 counterpartRoutes.get("/accounts/:id/interests", async (c) => {
   const me = c.get("user");
   const account = await loadAccount(c.env.DB, c.req.param("id"), me.company_id);
@@ -155,7 +164,7 @@ counterpartRoutes.get("/accounts/:id/interests", async (c) => {
   return c.json(await loadInterests(c.env.DB, account.id));
 });
 
-// 公開情報を読む。読むのは1回に1社分。すでに候補を作ったページは Claude に渡し直さない
+// 公開情報を読む。読むのは1回に1社分。すでに読んだページは Claude に渡し直さない。原文で確かめられたものだけが残る（groundInterests）
 counterpartRoutes.post("/accounts/:id/read-site", async (c) => {
   const db = c.env.DB;
   const me = c.get("user");
@@ -187,7 +196,7 @@ counterpartRoutes.post("/accounts/:id/read-site", async (c) => {
       await db.batch(drafts.map((d) => {
         const page = fresh[d.pageId];
         return db.prepare(
-          "INSERT INTO company_interests (id, account_id, text, basis, theme, source_url, source_title, published_on, fetched_on) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO company_interests (id, account_id, text, basis, theme, source_url, source_title, published_on, fetched_on, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')",
         ).bind(crypto.randomUUID(), account.id, d.text, d.quote, d.theme, stored(page.url), page.title.slice(0, 200), page.date, fetchedOn);
       }));
     }
@@ -196,16 +205,6 @@ counterpartRoutes.post("/accounts/:id/read-site", async (c) => {
     if (e instanceof SiteError) return c.json({ error: e.message }, 400);
     throw e;
   }
-});
-
-// 関心の候補を、読んだ人が出どころを見て確かめる（使う・使わない）
-counterpartRoutes.post("/interests/:id", async (c) => {
-  const { status } = await c.req.json<{ status?: string }>();
-  if (status !== "approved" && status !== "rejected") return c.json({ error: "使うか使わないかを選んでください" }, 400);
-  const r = await c.env.DB.prepare("UPDATE company_interests SET status = ? WHERE id = ? AND account_id IN (SELECT id FROM accounts WHERE company_id = ?)")
-    .bind(status, c.req.param("id"), c.get("user").company_id).run();
-  if (r.meta.changes === 0) return c.json({ error: "候補が見つかりません" }, 404);
-  return c.json({ ok: true });
 });
 
 counterpartRoutes.get("/buyers/:id/observations", async (c) => {

@@ -3,11 +3,12 @@
 export type PosWeek = { week_on: string; units: number; ly_units: number };
 export type PosSeries = {
   id: string; name: string; own: boolean; weeks: PosWeek[]; avg_units: number; yoy_pct: number;
-  before_units: number; after_units: number;
+  before_units: number; after_units: number; autumn_before_units: number; autumn_after_units: number;
 };
 export type Pos = {
   title: string; fetched_on: string; revised_on: string; from_on: string; to_on: string;
-  before_from: string; before_to: string; after_from: string; after_to: string; series: PosSeries[];
+  before_from: string; before_to: string; after_from: string; after_to: string;
+  autumn_on: string; autumn_before_from: string; autumn_before_to: string; autumn_after_from: string; autumn_after_to: string; series: PosSeries[];
 };
 
 type Row = { item_id: string; period: "recent" | "revision"; week_on: string; units: number; ly_units: number | null; short_name: string | null };
@@ -22,8 +23,8 @@ const lastDay = (monday: string) => new Date(Date.parse(monday) + 6 * DAY).toISO
 
 // 商談日までに終わった週だけを使う。8週そろわなければ出さない（商談日より後の数字を見せない）
 export async function loadPos(db: D1Database, accountId: string, meetingOn: string): Promise<Pos | null> {
-  const source = await db.prepare("SELECT title, fetched_on, revised_on FROM pos_sources WHERE account_id = ?")
-    .bind(accountId).first<{ title: string; fetched_on: string; revised_on: string }>();
+  const source = await db.prepare("SELECT title, fetched_on, revised_on, autumn_on FROM pos_sources WHERE account_id = ?")
+    .bind(accountId).first<{ title: string; fetched_on: string; revised_on: string; autumn_on: string }>();
   if (!source) return null;
   const { results } = await db.prepare(
     `SELECT p.item_id, p.period, p.week_on, p.units, p.ly_units, s.short_name FROM pos_weekly p
@@ -38,12 +39,18 @@ export async function loadPos(db: D1Database, accountId: string, meetingOn: stri
       after: revision.filter((r) => r.week_on >= source.revised_on).slice(0, REVISION_WEEKS),
     };
   };
+  // 秋の改定：前は改定前の4週、後は直近の週のうち改定の週からの4週
+  const aroundAutumn = (rows: Row[]) => ({
+    before: rows.filter((r) => r.period === "revision" && r.week_on < source.autumn_on).slice(-REVISION_WEEKS),
+    after: rows.filter((r) => r.period === "recent" && r.week_on >= source.autumn_on).slice(0, REVISION_WEEKS),
+  });
   const series: PosSeries[] = [];
   for (const id of new Set(results.map((r) => r.item_id))) {
     const rows = results.filter((r) => r.item_id === id);
     const recent = rows.filter((r) => r.period === "recent" && r.ly_units !== null).slice(-RECENT_WEEKS);
     const { before, after } = around(rows);
-    if (recent.length < RECENT_WEEKS || before.length < REVISION_WEEKS || after.length < REVISION_WEEKS) return null;
+    const autumn = aroundAutumn(rows);
+    if (recent.length < RECENT_WEEKS || before.length < REVISION_WEEKS || after.length < REVISION_WEEKS || autumn.before.length < REVISION_WEEKS || autumn.after.length < REVISION_WEEKS) return null;
     const weeks = recent.map(({ week_on, units, ly_units }) => ({ week_on, units, ly_units: ly_units! }));
     series.push({
       id, name: rows[0].short_name ?? "", own: id !== "", weeks,
@@ -51,10 +58,14 @@ export async function loadPos(db: D1Database, accountId: string, meetingOn: stri
       yoy_pct: Math.round((sum(weeks.map((w) => w.units)) / sum(weeks.map((w) => w.ly_units))) * 100),
       before_units: mean(before.map((r) => r.units)),
       after_units: mean(after.map((r) => r.units)),
+      autumn_before_units: mean(autumn.before.map((r) => r.units)),
+      autumn_after_units: mean(autumn.after.map((r) => r.units)),
     });
   }
   if (series.length === 0) return null;
-  const { before, after } = around(results.filter((r) => r.item_id === series[0].id));
+  const first = results.filter((r) => r.item_id === series[0].id);
+  const { before, after } = around(first);
+  const autumn = aroundAutumn(first);
   const weeks = series[0].weeks;
   return {
     ...source,
@@ -64,6 +75,10 @@ export async function loadPos(db: D1Database, accountId: string, meetingOn: stri
     before_to: lastDay(before[before.length - 1].week_on),
     after_from: after[0].week_on,
     after_to: lastDay(after[after.length - 1].week_on),
+    autumn_before_from: autumn.before[0].week_on,
+    autumn_before_to: lastDay(autumn.before[autumn.before.length - 1].week_on),
+    autumn_after_from: autumn.after[0].week_on,
+    autumn_after_to: lastDay(autumn.after[autumn.after.length - 1].week_on),
     series,
   };
 }

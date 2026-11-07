@@ -16,6 +16,12 @@ export const LOGIN_LIMITS = {
   ip: { limit: 50, windowSeconds: 15 * 60, lockSeconds: 30 * 60 },
 };
 
+// 入口の2つのボタン。架空の2人だけに、パスワードなしで入れる
+const DEMO_USERS = { rep: "user-morikawa", manager: "user-manager" } as const;
+export const DEMO_ENTRY_LIMIT = { limit: 30, windowSeconds: 15 * 60 };
+// 手元では常に出す。手元以外では DEMO_ENTRY=on を明示したときだけ（既定は閉じる）
+export const demoEntryOn = (url: string, flag?: string) => isLocal(url) || flag === "on";
+
 const FAILED = "メールアドレスまたはパスワードが違います";
 const LOCKED = "試行が多すぎます。しばらくしてからやり直してください";
 
@@ -81,6 +87,10 @@ async function currentUser(db: D1Database, url: string, token: string | undefine
   ).bind(await sha256(token), now()).first<SessionUser>();
 }
 
+const newToken = () => toBase64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const sessionInsert = async (db: D1Database, token: string, userId: string) =>
+  db.prepare("INSERT INTO login_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").bind(await sha256(token), userId, now() + SESSION_SECONDS);
+
 const isMutation = (method: string) => !["GET", "HEAD"].includes(method);
 
 // 全 /api の入口。棚卸し表に無いものは通さない
@@ -121,16 +131,36 @@ authRoutes.post("/login", async (c) => {
   const matched = await verifyPassword(password, row?.password_hash ?? NO_USER_HASH);
   if (!row || !matched) return c.json({ error: FAILED }, 401);
 
-  const token = toBase64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const token = newToken();
   await db.batch([
     db.prepare("DELETE FROM throttles WHERE key = ?").bind(emailKey),
     db.prepare("UPDATE throttles SET count = MAX(count - 1, 0) WHERE key = ?").bind(ipKey), // 成功は失敗に数えない
     db.prepare("DELETE FROM login_sessions WHERE expires_at <= ?").bind(now()),
-    db.prepare("INSERT INTO login_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").bind(await sha256(token), row.id, now() + SESSION_SECONDS),
+    await sessionInsert(db, token, row.id),
   ]);
   c.header("Set-Cookie", sessionCookie(c.req.url, token, SESSION_SECONDS));
   const user = await currentUser(db, c.req.url, token);
   return c.json(publicUser(user!));
+});
+
+authRoutes.get("/demo-entry", (c) => c.json({ on: demoEntryOn(c.req.url, c.env.DEMO_ENTRY) }));
+
+authRoutes.post("/demo-entry", async (c) => {
+  if (!demoEntryOn(c.req.url, c.env.DEMO_ENTRY)) return c.json({ error: "見つかりません" }, 404);
+  const db = c.env.DB;
+  const { role } = await c.req.json<{ role?: string }>().catch(() => ({ role: undefined }));
+  const userId = role === "rep" || role === "manager" ? DEMO_USERS[role] : null;
+  if (!userId) return c.json({ error: "入る人を選んでください" }, 400);
+  const ipKey = `demo:ip:${await sha256(c.req.header("cf-connecting-ip") ?? "local")}`;
+  if (!(await hit(db, ipKey, DEMO_ENTRY_LIMIT.limit, DEMO_ENTRY_LIMIT.windowSeconds))) return c.json({ error: LOCKED }, 429);
+  if (!(await db.prepare("SELECT 1 AS ok FROM users WHERE id = ?").bind(userId).first())) return c.json({ error: "見本の人が登録されていません" }, 503);
+  const token = newToken();
+  await db.batch([
+    db.prepare("DELETE FROM login_sessions WHERE expires_at <= ?").bind(now()),
+    await sessionInsert(db, token, userId),
+  ]);
+  c.header("Set-Cookie", sessionCookie(c.req.url, token, SESSION_SECONDS));
+  return c.json(publicUser((await currentUser(db, c.req.url, token))!));
 });
 
 authRoutes.post("/logout", async (c) => {

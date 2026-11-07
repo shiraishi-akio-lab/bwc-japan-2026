@@ -28,6 +28,6 @@ export type SessionUser = {
 };
 
 export type AppEnv = {
-  Bindings: { DB: D1Database; ASSETS: Fetcher; ANTHROPIC_API_KEY?: string; HANDOFF_AGENT_ID?: string; HANDOFF_ENV_ID?: string };
+  Bindings: { DB: D1Database; ASSETS: Fetcher; ANTHROPIC_API_KEY?: string; DEMO_ENTRY?: string; HANDOFF_AGENT_ID?: string; HANDOFF_ENV_ID?: string };
   Variables: { user: SessionUser };
 };

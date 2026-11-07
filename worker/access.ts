@@ -17,6 +17,8 @@ const rule = (method: string, path: string, allow: Allow, limit?: Limit): Rule =
 export const RULES: Rule[] = [
   rule("GET", "/health", "public"),
   rule("POST", "/login", "public"),
+  rule("GET", "/demo-entry", "public"),
+  rule("POST", "/demo-entry", "public"),
 
   rule("POST", "/logout", "any"),
   rule("GET", "/me", "any"),
@@ -39,7 +41,6 @@ export const RULES: Rule[] = [
   // 相手の棚。候補は上司だけが見る（若手には承認済みだけを返す）
   rule("GET", "/accounts/:id/interests", "any"),
   rule("POST", "/accounts/:id/read-site", "any", "claude"),
-  rule("POST", "/interests/:id", "any"),
   rule("GET", "/buyers/:id/observations", "any"),
   rule("GET", "/season-events", "any"),
 
